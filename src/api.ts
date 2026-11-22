@@ -3,13 +3,23 @@ export function connection() {
 }
 
 let localSessionUntil = 0;
+const localHost = () => ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 export async function ensureLocalSession(signal?: AbortSignal) {
   const {base, key} = connection();
   if (base || key || Date.now() < localSessionUntil) return;
-  const response = await fetch('/api/local-session', {method:'POST', credentials:'same-origin', signal:signal || AbortSignal.timeout(10000)});
-  if (!response.ok) throw new Error(response.status === 404 || response.status === 405
-    ? 'An older backend is running. Restart it with python start.py --local.'
-    : 'Local session is unavailable. Use the operator key in Connection Settings, or start the laptop app with python start.py --local.');
+  let response: Response;
+  try {
+    response = await fetch('/api/local-session', {method:'POST', credentials:'same-origin', signal:signal || AbortSignal.timeout(10000)});
+  } catch {
+    throw new Error(localHost()
+      ? 'No backend responded. Start the laptop app with python start.py --local, or set the backend origin in Connection Settings.'
+      : 'This hosted page cannot reach a backend. Enter your HTTPS backend origin and operator key in Connection Settings, then verify.');
+  }
+  if (!response.ok) throw new Error(!localHost()
+    ? 'This Vercel page has no backend. Set VITE_API_BASE_URL to your HTTPS FastAPI origin and redeploy, or enter that origin plus operator key in Connection Settings.'
+    : response.status === 404 || response.status === 405
+      ? 'An older backend is running. Restart it with python start.py --local.'
+      : 'Local session is unavailable. Use the operator key in Connection Settings, or start the laptop app with python start.py --local.');
   localSessionUntil = Date.now() + 7*3600*1000;
 }
 
