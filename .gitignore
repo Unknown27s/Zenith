@@ -1,0 +1,14 @@
+node_modules/
+dist/
+artifacts/
+*.tsbuildinfo
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+data/
+*.pt
+*.log
+.ipynb_checkpoints/

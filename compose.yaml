@@ -1,0 +1,61 @@
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: zenith
+      POSTGRES_USER: zenith
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zenith -d zenith"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://zenith:${POSTGRES_PASSWORD}@database/zenith
+      ZENITH_DATA: /data
+    volumes:
+      - ./data:/data:z
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "backend.worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://zenith:${POSTGRES_PASSWORD}@database/zenith
+      ZENITH_DATA: /data
+    volumes:
+      - ./data:/data:z
+      - model-cache:/root/.cache
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+  web:
+    build: .
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+volumes:
+  postgres-data:
+  model-cache:

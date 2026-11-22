@@ -1,0 +1,44 @@
+[
+  {
+    "id": "people-zone",
+    "title": "People crossing a street",
+    "capability": "zone",
+    "file": "people-zone.webm",
+    "seconds": 3.667,
+    "credit": "WrS.tm.pl / Wikimedia Commons",
+    "license": "Public domain (as stated on the source page)",
+    "licenseUrl": "https://commons.wikimedia.org/wiki/File:Pedestrian_crossing_on_Saint_Anthony_Street_at_the_intersection_with_G%C5%82owackiego_Street_in_Tomasz%C3%B3w_Mazowiecki,_Poland.ogg",
+    "source": "https://commons.wikimedia.org/wiki/File:Pedestrian_crossing_on_Saint_Anthony_Street_at_the_intersection_with_G%C5%82owackiego_Street_in_Tomasz%C3%B3w_Mazowiecki,_Poland.ogg",
+    "instruction": "Draw boxes around people and flag anyone who remains in the demonstration zone for more than two seconds.",
+    "description": "Draw a fictional demonstration region around a pedestrian route. This is ordinary street footage, not evidence that anyone entered a real restricted area.",
+    "changes": "3.67-second excerpt; re-encoded as VP9 WebM with audio removed. No synthetic people or detector results added."
+  },
+  {
+    "id": "traffic-counting",
+    "title": "Vehicles at a highway interchange",
+    "capability": "traffic",
+    "file": "traffic-counting.webm",
+    "seconds": 12,
+    "credit": "Artyom Svetlov / Wikimedia Commons",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:MKAD%E2%80%93Kashirskoye_Highway_interchange_2008-04_1207483200.webm",
+    "instruction": "Count vehicles crossing this line and show counts by vehicle class.",
+    "description": "Draw a finite line across one lane or carriageway. Verify crossings manually; perspective, small vehicles and camera movement can affect tracks.",
+    "changes": "12-second excerpt; resized/re-encoded as VP9 WebM with audio removed. Attribution retained; no detector results added."
+  },
+  {
+    "id": "equipment-activity",
+    "title": "A working screw conveyor",
+    "capability": "machine_activity",
+    "file": "equipment-activity.webm",
+    "seconds": 5.8,
+    "credit": "Grendelkhan / Wikimedia Commons",
+    "license": "CC BY-SA 4.0 (including this adapted excerpt)",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Screw_conveyor_moving_grape_stems_at_Chateau_Montelena.gk.webm",
+    "instruction": "Observe sustained visible machine activity inside this region.",
+    "description": "Select a region around the visible conveyor. This demonstrates a motion proxy, not electrical ON/OFF measurement or actual emissions.",
+    "changes": "5.8-second excerpt; resized/re-encoded as VP9 WebM with audio removed. Adaptation distributed under CC BY-SA 4.0; no detector results added."
+  }
+]

@@ -1,0 +1,10 @@
+.venv
+node_modules
+data
+dist
+.env
+.env.*
+__pycache__
+*.pt
+notebooks
+artifacts

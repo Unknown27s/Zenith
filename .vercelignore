@@ -1,0 +1,8 @@
+.venv
+data
+artifacts
+notebooks
+*.pt
+.env
+.env.*
+__pycache__
