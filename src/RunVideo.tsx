@@ -113,8 +113,8 @@ export default function RunVideo({run, events = [], autoLoad = false}: {
         }}/>
       {overlayReady && <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
         {run.rule.capability === 'traffic'
-          ? <line x1={points[0][0] * 1000} y1={points[0][1] * 1000}
-                  x2={points[1][0] * 1000} y2={points[1][1] * 1000}/>
+          ? [points.slice(0,2),points.slice(2,4)].filter(gate=>gate.length===2).map(([a,b], i) =>
+            <line key={i} x1={a[0]*1000} y1={a[1]*1000} x2={b[0]*1000} y2={b[1]*1000}/>)
           : <polygon points={points.map(([x, y]) => `${x * 1000},${y * 1000}`).join(' ')}/>}
         {active && <rect x={active.box[0] * 1000} y={active.box[1] * 1000}
           width={(active.box[2] - active.box[0]) * 1000} height={(active.box[3] - active.box[1]) * 1000}/>}
@@ -127,7 +127,7 @@ export default function RunVideo({run, events = [], autoLoad = false}: {
     {failure && <p role="alert" className="error-text">{failure}</p>}
 
     {run.rule.capability === 'traffic' && <div className="run-video-summary">
-      <strong>{total} crossings</strong>
+      <strong>{total} {run.rule.segment_metres?"completed traversals":"crossings"}</strong>
       <span>{Object.entries(counts).map(([name, count]) => `${name} ${count}`).join(' · ') || 'No vehicles counted'}</span>
       {url && crossings.length > 0 && <span className="run-video-live">
         {countSoFar} so far{active && <> · {active.vehicle_class} #{active.track_id}</>}
@@ -143,7 +143,7 @@ export default function RunVideo({run, events = [], autoLoad = false}: {
       </button>)}
     </div>}
     {run.rule.capability === 'traffic' && total > crossings.length &&
-      <p className="small-note">Timestamps are available for {crossings.length} of {total} crossings in this run.</p>}
+      <p className="small-note">Timestamps are available for {crossings.length} of {total} {run.rule.segment_metres?"completed traversals":"crossings"} in this run.</p>}
 
     {incidents.length > 0 && <div className="run-video-markers" role="group" aria-label="Incident timestamps">
       {incidents.map(item => <button key={item.id} type="button" className="button secondary"

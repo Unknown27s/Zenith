@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import time
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +22,7 @@ from .config import ALL_RECIPIENTS, DATA, MAX_DURATION, MAX_UPLOAD, STORAGE_LIMI
 from .db import Carbon, EmissionFactor, Equipment, Incident, Notification, OperatorKey, Run, RunSummary, Session, Source, VisionReview, engine, init_db, serialize
 from .schemas import Action, CameraRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, ProposalRequest, RunRequest, VisionReviewRequest
 from . import camera, vision
+from .models import ACTION_UPLOAD, action_checkpoint, model_status
 from .alerts import telegram_probe, telegram_send
 
 log = logging.getLogger('zenith')
@@ -160,7 +162,41 @@ def status(identity=Depends(owner)):
                          'telegram': {'configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS), 'chats': len(TELEGRAM_CHAT_IDS), 'evidence': TELEGRAM_SEND_EVIDENCE}},
             'ai_review': vision_status['provider'], 'vision': vision_status, 'recipients': ALL_RECIPIENTS, 'max_upload_mb': MAX_UPLOAD // (1024*1024),
             'max_video_seconds': MAX_DURATION, 'deployment': 'laptop operator-key workspaces',
-            'capabilities': ['zone', 'traffic', 'machine_activity']}
+            'capabilities': ['zone', 'traffic', 'machine_activity', 'action'], 'models': model_status()}
+
+
+@app.post('/api/models/action')
+async def install_action_model(file: UploadFile, identity=Depends(administrator)):
+    if os.getenv('ZENITH_ACTION_MODEL'):
+        raise HTTPException(409, 'This backend uses ZENITH_ACTION_MODEL. Update the configured file on the worker.')
+    if Path(file.filename or '').suffix.lower() != '.pt':
+        raise HTTPException(400, 'Choose the .pt checkpoint exported by the Zenith action notebook.')
+    try:
+        from .action_model import load_classifier
+    except ImportError as error:
+        raise HTTPException(503, 'Install worker dependencies on the API host or configure ZENITH_ACTION_MODEL.') from error
+    ACTION_UPLOAD.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=ACTION_UPLOAD.parent, suffix='.part', delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            content = await file.read(8 * 1024**2 + 1)
+            if not content or len(content) > 8 * 1024**2:
+                raise HTTPException(400, 'The checkpoint must be nonempty and at most 8 MB.')
+            stream.write(content)
+            stream.close()
+            try:
+                load_classifier(temporary)
+            except Exception as error:
+                raise HTTPException(400, 'Invalid checkpoint. Export the model from the Zenith fight and fall notebook.') from error
+            temporary.replace(ACTION_UPLOAD)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return model_status()
+
+
+def check_model(rule):
+    if rule.capability == 'action' and not action_checkpoint().is_file():
+        raise HTTPException(409, 'Upload the fight and fall checkpoint in Settings before starting analysis.')
 
 
 @app.get('/api/operators')
@@ -208,6 +244,7 @@ def check_recipients(rule):
 
 @app.post('/api/cameras/rtsp/start', status_code=202)
 def start_rtsp(body: CameraRequest, identity=Depends(owner)):
+    check_model(body.rule)
     check_recipients(body.rule)
     heartbeat = DATA / 'worker.heartbeat'
     if not heartbeat.exists() or time.time() - heartbeat.stat().st_mtime > 45:
@@ -348,13 +385,17 @@ def source_artifact(source_id: str, artifact: str, identity=Depends(owner)):
 @app.post('/api/proposals')
 def propose(body: ProposalRequest, identity=Depends(owner)):
     text = body.instruction.lower()
-    unsupported = ['collapse', 'helmet', 'ppe', 'fire', 'smoke', 'crowd', 'weapon', 'face', 'obstruction']
+    unsupported = ['helmet', 'ppe', 'fire', 'smoke', 'crowd', 'weapon', 'face', 'obstruction']
     if any(word in text for word in unsupported):
         raise HTTPException(422, 'This capability is not available yet. Use a person-zone, vehicle-counting or machine-activity instruction.')
+    action = bool(re.search(r'\b(fights?|fighting|violence|fall(?:s|ing)?|collapse[sd]?)\b', text))
     machine = any(word in text for word in ['machine', 'motor', 'equipment', 'generator', 'conveyor'])
     traffic = any(word in text for word in ['vehicle', 'truck', 'car ', 'cars', 'bus', 'traffic', 'motorcycle'])
     zone = any(word in text for word in ['person', 'people', 'anyone', 'worker', 'someone'])
-    if sum([machine, traffic, zone]) != 1:
+    if action and not (machine or traffic):
+        return {'capability': 'action', 'dwell_seconds': 2, 'parser': 'constrained local parser',
+                'model': 'YOLO Pose and Action Transformer', 'warnings': ['Review each possible fight or fall against the footage.']}
+    if action or sum([machine, traffic, zone]) != 1:
         raise HTTPException(422, 'Describe one supported rule at a time: people in a zone, vehicle counting, or visible machine activity.')
     capability = 'machine_activity' if machine else 'traffic' if traffic else 'zone'
     match = re.search(r'(\d+(?:\.\d+)?)\s*(seconds?|secs?|s)\b', text)
@@ -364,11 +405,12 @@ def propose(body: ProposalRequest, identity=Depends(owner)):
         raise HTTPException(422, 'Dwell must be between 0.2 and 120 seconds')
     return {'capability': capability, 'dwell_seconds': dwell, 'parser': 'constrained local parser',
             'model': 'OpenCV ROI motion proxy' if machine else 'YOLOv8 Nano + ByteTrack',
-            'warnings': ['No vision agent has inspected the preview. Draw and confirm the zone or line.', 'Recipients are selected from configured contacts; language cannot authorize delivery.'] + (['Visible motion is not proof of electrical on/off state.'] if machine else [])}
+            'warnings': ['No vision agent has inspected the preview. Review the suggested rule and any geometry.', 'Recipients are selected from configured contacts; language cannot authorize delivery.'] + (['Visible motion is not proof of electrical on/off state.'] if machine else [])}
 
 
 @app.post('/api/runs', status_code=202)
 def create_run(body: RunRequest, identity=Depends(owner)):
+    check_model(body.rule)
     check_recipients(body.rule)
     approval = None
     if body.vision_provider:
@@ -553,6 +595,9 @@ def carbon_values(body, session, identity):
         if body.kind == 'traffic':
             if run.payload['rule']['capability'] != 'traffic' or not body.vehicle_class:
                 raise HTTPException(400, 'Select a traffic run and vehicle class')
+            distance = run.payload['rule'].get('segment_metres')
+            if distance is not None:
+                values['distance_km'] = distance / 1000
             raw_count = run.payload.get('counts', {}).get(body.vehicle_class, 0)
             dismissed = sum(1 for crossing in run.payload.get('crossings', [])
                 if crossing['vehicle_class'] == body.vehicle_class and
@@ -588,8 +633,8 @@ def carbon_values(body, session, identity):
         kg = values['quantity'] * values['factor']
         formula = f"{values['quantity']:g} L × {values['factor']:g} kg CO2e/L"
     else:
-        kg = values['quantity'] * body.distance_km * values['factor'] / 1000
-        formula = f"{values['quantity']:g} vehicles × {body.distance_km:g} km × {values['factor']:g} g CO2/vehicle-km ÷ 1000"
+        kg = values['quantity'] * values['distance_km'] * values['factor'] / 1000
+        formula = f"{values['quantity']:g} vehicles × {values['distance_km']:g} km × {values['factor']:g} g CO2/vehicle-km ÷ 1000"
     return {**values, 'kg': kg, 'formula': formula, 'label': 'CO2 estimate' if body.kind == 'traffic' else 'CO2e estimate'}
 
 

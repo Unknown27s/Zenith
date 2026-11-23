@@ -17,6 +17,8 @@ from sqlalchemy import or_, select, update
 from .alerts import telegram_send, telegram_send_photo
 from .config import ALL_RECIPIENTS, DATA, TELEGRAM_BOT_TOKEN, TELEGRAM_SEND_EVIDENCE, VISION_AUTO_LIMIT, telegram_chat
 from .db import Incident, Notification, Run, Session, Source, VisionReview, init_db
+from .models import action_checkpoint, detector_checkpoint
+from .segment import SegmentCounter, gate_crossing
 from .vision import process_one_review, process_one_summary
 
 log = logging.getLogger('zenith.worker')
@@ -116,7 +118,7 @@ def save_incident(run, token, frame_index, timestamp, title, detail, frames, aut
             'source_seconds': round(timestamp, 3), 'processed_at': time.time(), 'title': title, 'detail': detail,
             'severity': 'review' if run.payload['rule']['capability'] == 'machine_activity' else 'attention',
             'rule_version': 'v2', 'rule_name': run.payload['rule']['name'], 'frames': names,
-            'detector_settings': {key: run.payload['rule'].get(key) for key in ('confidence', 'image_size', 'iou_threshold', 'analysis_fps', 'vehicle_classes')},
+            'detector_settings': {key: run.payload['rule'].get(key) for key in ('confidence', 'image_size', 'iou_threshold', 'analysis_fps', 'vehicle_classes', 'action_confidence')},
             'ai_review': 'not_enabled', 'operator_status': 'suspected', 'history': [], 'alert': alert})
         session.add(event)
         if auto_review and names:
@@ -150,21 +152,18 @@ def add_after(event_id, image):
             session.commit()
 
 
-def crossed(a, b, c, d):
-    def orientation(p, q, r):
-        return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
-    return orientation(c, d, a)*orientation(c, d, b) < 0 and orientation(a, b, c)*orientation(a, b, d) <= 0
-
-
 def run_findings(rule, counts, activity_seconds, event_count, coverage):
     """Always-available, source-bound summary; no invented model observations."""
     capability = rule['capability']
     if capability == 'traffic':
         breakdown = ', '.join(f'{name}: {count}' for name, count in counts.items() if count)
         total = sum(counts.values())
-        result = f'{total} tracked vehicle crossing(s) at the configured line.'
+        result = (f'{total} completed road segment traversal(s).' if rule.get('segment_metres')
+                  else f'{total} tracked vehicle crossing(s) at the configured line.')
         if breakdown:
             result += f' Classes: {breakdown}.'
+    elif capability == 'action':
+        result = f'{event_count} possible fight or fall observation(s) for operator review.'
     elif capability == 'zone':
         result = f'{event_count} suspected zone-dwell observation(s) at the configured region.'
     else:
@@ -177,7 +176,7 @@ def run_findings(rule, counts, activity_seconds, event_count, coverage):
 def detection_classes(rule, names):
     """Resolve checkpoint labels instead of assuming every checkpoint uses COCO IDs."""
     labels = names if isinstance(names, dict) else dict(enumerate(names))
-    requested = ['person'] if rule['capability'] == 'zone' else rule.get('vehicle_classes', ['car', 'motorcycle', 'bus', 'truck'])
+    requested = ['person'] if rule['capability'] in ('zone', 'action') else rule.get('vehicle_classes', ['car', 'motorcycle', 'bus', 'truck'])
     by_name = {name: index for index, name in labels.items()}
     missing = [name for name in requested if name not in by_name]
     if missing:
@@ -191,22 +190,33 @@ def analyze(run_id, token):
         source = session.get(Source, run.payload['source_id'])
     rule = run.payload['rule']
     cap = cv2.VideoCapture(str(DATA / 'sources' / source.payload['file']))
-    model = None
+    capability = rule['capability']
+    model = action = None
+    checkpoint = detector_checkpoint(capability)
+    action_path = action_checkpoint() if capability == 'action' else None
+    segment = SegmentCounter(rule['points']) if rule.get('segment_metres') else None
     try:
-        if rule['capability'] != 'machine_activity':
+        if action_path is not None:
+            from .action_model import ActionMonitor
+            action = ActionMonitor(action_path, rule.get('action_confidence', .6))
+        if capability != 'machine_activity':
             from ultralytics import YOLO
-            model = YOLO(os.getenv('ZENITH_MODEL', 'yolov8n.pt'))
+            model = YOLO(checkpoint)
+            if action and model.task != 'pose':
+                raise ValueError('ZENITH_POSE_MODEL must point to a YOLO pose checkpoint.')
         classes = detection_classes(rule, model.names) if model is not None else []
         fps = source.payload['fps']
-        step = max(1, round(fps / rule.get('analysis_fps', 8)))
+        requested_fps = 10 if action else rule.get('analysis_fps', 8)
+        step = max(1, round(fps / requested_fps))
         update_run(run_id, token, analysis_settings={
-            'engine': 'OpenCV ROI motion' if model is None else 'YOLO + ByteTrack',
-            'checkpoint': None if model is None else os.path.basename(os.getenv('ZENITH_MODEL', 'yolov8n.pt')),
+            'engine': 'YOLO Pose + ByteTrack + Action Transformer' if action else 'YOLO + ByteTrack' if model else 'OpenCV ROI motion',
+            'checkpoint': Path(checkpoint).name if model else None,
+            **({'classifier': action_path.name, 'action_confidence': action.threshold} if action else {}),
             'confidence': rule.get('confidence', 0.3), 'image_size': rule.get('image_size', 640),
-            'iou_threshold': rule.get('iou_threshold', 0.7), 'requested_fps': rule.get('analysis_fps', 8),
-            'classes': ['person'] if rule['capability'] == 'zone' else rule.get('vehicle_classes', ['car', 'motorcycle', 'bus', 'truck']) if model is not None else [],
+            'iou_threshold': rule.get('iou_threshold', 0.7), 'requested_fps': requested_fps,
+            'classes': ['person'] if rule['capability'] in ('zone', 'action') else rule.get('vehicle_classes', ['car', 'motorcycle', 'bus', 'truck']) if model is not None else [],
         })
-        points = np.array(rule['points'], dtype=np.float32)
+        points = np.asarray(rule['points'], dtype=np.float32).reshape(-1, 2)
         index = 0
         last_t = None
         last_gray = None
@@ -251,21 +261,20 @@ def analyze(run_id, token):
                 last_gray = None
                 activity_start = None
                 activity_reported = False
-                # Do not infer sustained dwell or a line crossing through unobserved time.
-                in_zone.clear()
-                previous.clear()
-                activity_start = None
-                activity_reported = False
-                last_gray = None
+                if segment:
+                    segment.reset()
             scale = min(1, max(960, rule.get('image_size', 640)) / max(frame.shape[:2]))
             if scale < 1:
                 frame = cv2.resize(frame, (round(frame.shape[1]*scale), round(frame.shape[0]*scale)))
             height, width = frame.shape[:2]
             polygon = (points * [width, height]).astype(np.int32)
             annotated = frame.copy()
-            if rule['capability'] == 'traffic':
-                cv2.line(annotated, tuple(polygon[0]), tuple(polygon[1]), (180, 230, 70), 3)
-            else:
+            if capability == 'traffic':
+                for i in range(0, len(polygon), 2):
+                    cv2.line(annotated, tuple(polygon[i]), tuple(polygon[i+1]), (180, 230, 70), 3)
+                    if segment:
+                        cv2.putText(annotated, 'AB'[i//2], tuple(polygon[i]), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            elif capability != 'action':
                 overlay = annotated.copy()
                 cv2.fillPoly(overlay, [polygon], (100, 180, 40))
                 annotated = cv2.addWeighted(overlay, 0.18, annotated, 0.82, 0)
@@ -275,6 +284,12 @@ def analyze(run_id, token):
                 result = model.track(frame, persist=True, tracker='bytetrack.yaml', classes=classes,
                                      conf=rule.get('confidence', 0.3), iou=rule.get('iou_threshold', 0.7),
                                      verbose=False, imgsz=rule.get('image_size', 640))[0]
+                if action:
+                    signal = action.push(result, timestamp)
+                    if not signal and index + step > round(source.payload['duration'] * fps) and action.since_score:
+                        signal = action.score(timestamp)
+                    if signal:
+                        signals.append(signal)
                 active = set()
                 if result.boxes is not None and result.boxes.id is not None:
                     for box, track_id, cls in zip(result.boxes.xyxy.cpu().numpy(), result.boxes.id.int().cpu().tolist(), result.boxes.cls.int().cpu().tolist()):
@@ -294,12 +309,19 @@ def analyze(run_id, token):
                                 in_zone[track_id] = (start, fired)
                             else:
                                 in_zone.pop(track_id, None)
-                        else:
-                            prev = previous.get(track_id)
-                            if prev and track_id not in counted and timestamp-prev[1] < 0.75 and crossed(prev[0], foot, points[0], points[1]):
+                        elif capability == 'traffic' and track_id not in counted:
+                            direction = None
+                            if segment:
+                                direction = segment.update(track_id, foot, timestamp)
+                            else:
+                                prev = previous.get(track_id)
+                                if prev and timestamp-prev[1] < .75:
+                                    hit = gate_crossing(prev[0], foot, points[0], points[1])
+                                    if hit:
+                                        direction = 'A→B' if hit[1] else 'B→A'
+                                previous[track_id] = (foot, timestamp)
+                            if direction:
                                 counts[label] += 1
-                                side = (points[1][0]-points[0][0])*(foot[1]-points[0][1])-(points[1][1]-points[0][1])*(foot[0]-points[0][0])
-                                direction = 'A→B' if side > 0 else 'B→A'
                                 directions[direction] += 1
                                 if len(crossings) < 1000:
                                     crossings.append({
@@ -308,7 +330,6 @@ def analyze(run_id, token):
                                         'box': [x1 / width, y1 / height, x2 / width, y2 / height],
                                     })
                                 counted.add(track_id)
-                            previous[track_id] = (foot, timestamp)
                 in_zone = {k:v for k,v in in_zone.items() if k in active}
                 previous = {k:v for k,v in previous.items() if timestamp-v[1] < 1}
             else:

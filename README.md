@@ -62,9 +62,15 @@ The administrator can issue separate local operator keys in Settings; source and
 1. Choose one of the licensed source excerpts in **Demo Footage**, or upload a short fixed-camera clip (max 100 MB / 180 seconds by default). Additional original footage still requires your consent/reuse review. Bundled clips are demonstration sources, not validated rule outcomes.
 2. For a person-zone instruction, choose **Restricted-zone dwell**; click a polygon around the area. Use at least three non-crossing points. A keyboard coordinate editor is also available.
 3. Confirm the dwell threshold, geometry, name and configured recipient. Click **Run analysis**.
-4. YOLOv8 Nano weights download on the first person/vehicle run. To avoid presentation network dependence, pre-download with:
-   `.venv/bin/python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"`
+4. Detector weights download on their first run. To cache the default zone, traffic, and pose models before a demo, run:
+   `.venv/bin/python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); YOLO('yolo11n.pt'); YOLO('yolo11n-pose.pt')"`
 5. Inspect the run history and source evidence. An alert only appears if the actual detector/tracker and rule produce it. No promise is made of one alert without representative footage calibration.
+
+## Traffic CO₂ and fight/fall notebooks
+
+- [Traffic CO₂ Colab](notebooks/Zenith_Traffic_CO2_Colab.ipynb) runs the standalone two-gate demo. In Studio, choose traffic analysis and enable **Count complete road segment traversals**. Draw Gate A, then Gate B, left to right. Enter the measured road distance in metres. Completed two-gate runs carry their distance into carbon estimates. Enter a documented class factor in g CO₂ per vehicle-km. Demo Footage supplies an illustrative 50 m distance and factors for preview.
+- [Fight and fall training Colab](notebooks/Zenith_CCTV_AutoTrain_Colab.ipynb) exports **zenith_cctv_action.pt**. Connect using the administrator key and upload the file in **Settings → Analysis models**. Alternatively put it in **data/models/zenith_cctv_action.pt** under the shared data directory or set **ZENITH_ACTION_MODEL** to a worker-visible path. The worker uses YOLO11 Pose plus the trained Transformer. The upload validates the checkpoint format and model architecture. The notebook's first reported test detected 15 of 29 fights and 8 of 22 falls. Review all model observations using the original footage.
+- Demo Footage includes a fixed-camera motorway segment, boxing training and a staged fall. The two action clips join the automatic demo once an action checkpoint is configured. Boxing training tests a look-alike scenario. Action results are clip-based, including during bounded camera capture.
 
 ## Built-in carbon—industrial and road activity
 No numeric factors are shipped as though universally valid. Enter an applicable source, year/region/fuel and activity basis.

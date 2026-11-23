@@ -31,17 +31,17 @@ const datasets = [
   {
     title: 'Multiple Cameras Fall Dataset',
     provider: 'Kaggle · soumicksarker',
-    tag: 'FUTURE CAPABILITY · NOT ENABLED',
-    description: 'Simulated falls and normal daily activities captured with multiple cameras. A research reference for future pose-based possible-collapse handling.',
+    tag: 'FALL DETECTION RESEARCH',
+    description: 'Simulated falls and normal daily activities captured with multiple cameras. A research reference for evaluating pose-based fall recognition.',
     size: 'About 3.78 GB dataset',
     license: 'License is “Other (specified in description)”. Permission is unresolved: do not redistribute it as a public demo bundle.',
-    note: 'Fall detection is not implemented in this build. A dataset link does not enable that detector or establish consent for public presentation.',
+    note: 'The prototype uses a separately trained pose checkpoint. Check the dataset terms before publishing any clip.',
     page: 'https://www.kaggle.com/datasets/soumicksarker/multiple-cameras-fall-dataset',
     download: '',
   },
 ];
 
-export default function DemoLibrary({connected, workerOnline, notify, refresh}: {connected: boolean; workerOnline: boolean; notify: (message: string) => void; refresh: () => void}) {
+export default function DemoLibrary({connected, workerOnline, notify, refresh, actionReady}: {connected: boolean; workerOnline: boolean; actionReady: boolean; notify: (message: string) => void; refresh: () => void}) {
   const [busy, setBusy] = useState('');
   async function useExample(item: typeof manifest[number]) {
     setBusy(item.id);
@@ -51,17 +51,17 @@ export default function DemoLibrary({connected, workerOnline, notify, refresh}: 
       sessionStorage.setItem('zenith.capability', item.capability);
       sessionStorage.setItem('zenith.instruction', item.instruction);
       refresh(); window.location.hash = 'studio';
-      notify('Example imported. A starting region or line is ready; review and confirm it before running.');
+      notify('Example imported. Review the suggested analysis settings before running.');
     } catch (error) { notify((error as Error).message); }
     finally { setBusy(''); }
   }
   return <>
     <div className="heading"><div><div className="eyebrow">FOOTAGE TO GET STARTED</div><h1>Choose a real source. Keep its context.</h1><p>Download from the original provider, inspect the clip, then upload it to the monitoring studio.</p></div><a className="button primary" href="#studio"><Camera size={17}/> Open studio</a></div>
-    <AutomaticDemo connected={connected} workerOnline={workerOnline} refresh={refresh}/>
-    <div className="info-note"><strong>One example for each supported capability.</strong> Preview or download the clips below, then use one in the studio. They are real source excerpts, not fabricated detector outputs. Studio suggests editable geometry; check it against the footage before confirming. Source credit and license travel with each example.</div>
+    <AutomaticDemo connected={connected} workerOnline={workerOnline} actionReady={actionReady} refresh={refresh}/>
+    <div className="info-note"><strong>Example footage for every supported capability.</strong> Preview or download the clips below, then use one in the studio. They are real source excerpts, not fabricated detector outputs. Studio suggests editable geometry; check it against the footage before confirming. Source credit and license travel with each example.</div>
     <div className="example-video-grid">{manifest.map(item => <section className="panel example-video-card" key={item.id}>
       <video controls playsInline preload="metadata" src={`/examples/${item.file}`} aria-label={item.title}/>
-      <div className="example-video-body"><span className="badge">{item.capability === 'zone' ? 'PEOPLE / ZONE' : item.capability === 'traffic' ? 'TRAFFIC / CARBON INPUT' : 'EQUIPMENT / MOTION PROXY'}</span><h2>{item.title}</h2><p>{item.description}</p><blockquote>{item.instruction}</blockquote>
+      <div className="example-video-body"><span className="badge">{item.capability === 'zone' ? 'PEOPLE / ZONE' : item.capability === 'traffic' ? 'TRAFFIC / CARBON INPUT' : item.capability === 'action' ? 'FIGHT / FALL TEST CLIP' : 'EQUIPMENT / MOTION PROXY'}</span><h2>{item.title}</h2><p>{item.description}</p><blockquote>{item.instruction}</blockquote>
       <p className="example-credit">{item.credit}<br/><a href={item.licenseUrl} target="_blank" rel="noopener noreferrer">{item.license}</a> · <a href={item.source} target="_blank" rel="noopener noreferrer">Original source ↗</a></p><p className="example-credit">{item.changes}</p>
       <div className="action-row"><button className="button primary" disabled={!connected || !!busy} onClick={() => void useExample(item)}>{busy === item.id ? 'Importing…' : 'Use in studio'}</button><a className="button secondary" download href={`/examples/${item.file}`}><ArrowDownToLine size={16}/> Download video</a></div></div>
     </section>)}</div>

@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory(prefix='zenith-smoke-', dir=temp_root) as direc
     os.environ['ZENITH_DATA'] = directory
     os.environ['DATABASE_URL'] = f"sqlite:///{(Path(directory) / 'test.db').as_posix()}"
     os.environ['VISION_PROVIDER'] = 'off'
-    os.environ['ZENITH_MODEL'] = str(ROOT / 'yolov8n.pt')
+    os.environ['ZENITH_TRAFFIC_MODEL'] = str(ROOT / 'yolo11n.pt')
     from fastapi.testclient import TestClient
     from backend.config import TOKEN
     from backend.db import engine
@@ -29,7 +29,8 @@ with tempfile.TemporaryDirectory(prefix='zenith-smoke-', dir=temp_root) as direc
         queued = client.post('/api/runs', headers=headers, json={
             'source_id': source['id'], 'rule': {
                 'capability': 'traffic', 'name': 'Smoke test · traffic', 'confirmed': True,
-                'points': [[.42, .63], [.42, .90]], 'analysis_fps': 8}})
+                'points': [[.18, .68], [.53, .68], [.03, .86], [.45, .86]],
+                'segment_metres': 50, 'analysis_fps': 6, 'confidence': .25}})
         queued.raise_for_status()
         run_id = queued.json()['id']
         claimed = claim()
@@ -41,19 +42,23 @@ with tempfile.TemporaryDirectory(prefix='zenith-smoke-', dir=temp_root) as direc
         events_response = client.get(f'/api/runs/{run_id}/events', headers=headers)
         events_response.raise_for_status()
         assert run['status'] == 'completed' and run['findings']['summary']
-        if run.get('crossings'):
-            track_id = run['crossings'][0]['track_id']
-            reviewed = client.post(f'/api/runs/{run_id}/crossings/{track_id}/review', headers=headers,
-                                   json={'action':'false_positive','note':'Smoke test annotation, not a real correction'})
-            assert reviewed.status_code == 200, reviewed.text
-            after = client.get(f'/api/runs/{run_id}', headers=headers).json()
-            assert after['counts'] == run['counts'] and after['crossing_reviews'][str(track_id)]['action'] == 'false_positive'
-            vehicle_class = run['crossings'][0]['vehicle_class']
-            estimate = client.post('/api/carbon/preview', headers=headers, json={
-                'name':'Test traffic', 'kind':'traffic', 'quantity':0, 'run_id':run_id,
-                'vehicle_class':vehicle_class, 'distance_km':1, 'factor':100,
-                'factor_source':'Synthetic test factor; not for real estimates', 'basis':'Smoke test only'})
-            assert estimate.status_code == 200 and estimate.json()['quantity'] == run['counts'][vehicle_class] - 1
+        assert run.get('crossings'), run
+        track_id = run['crossings'][0]['track_id']
+        reviewed = client.post(f'/api/runs/{run_id}/crossings/{track_id}/review', headers=headers,
+                               json={'action':'false_positive','note':'Smoke test annotation, not a real correction'})
+        assert reviewed.status_code == 200, reviewed.text
+        after = client.get(f'/api/runs/{run_id}', headers=headers).json()
+        assert after['counts'] == run['counts'] and after['crossing_reviews'][str(track_id)]['action'] == 'false_positive'
+        vehicle_class = run['crossings'][0]['vehicle_class']
+        estimate = client.post('/api/carbon/preview', headers=headers, json={
+            'name':'Test traffic', 'kind':'traffic', 'quantity':0, 'run_id':run_id,
+            'vehicle_class':vehicle_class, 'distance_km':1, 'factor':100,
+            'factor_source':'Synthetic test factor; not for real estimates', 'basis':'Smoke test only'})
+        assert estimate.status_code == 200, estimate.text
+        values = estimate.json()
+        assert values['quantity'] == run['counts'][vehicle_class] - 1
+        assert values['distance_km'] == .05
+        assert abs(values['kg'] - values['quantity'] * .005) < 1e-9
         pdf = client.get(f'/api/reports/pdf?run_id={run_id}', headers=headers)
         assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF'), pdf.text[:200]
         csv = client.get(f'/api/reports/csv?run_id={run_id}', headers=headers)

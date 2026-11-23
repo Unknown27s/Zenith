@@ -6,15 +6,19 @@ import type { Capability, CarbonEstimate, Incident, Point, Run, Source } from '.
 import { suggestedPoints } from './geometry';
 
 const demoSteps: {
-  id: string; title: string; capability: Capability; points: Point[]; dwell: number; confidence: number;
+  id: string; title: string; capability: Capability; points: Point[]; dwell: number; confidence: number; segmentMetres?: number;
 }[] = [
   {id:'people-zone', title:'Safety zone', capability:'zone',
     points:suggestedPoints('zone','people-zone'), dwell:.2, confidence:.15},
   {id:'traffic-counting', title:'Traffic crossings', capability:'traffic',
-    points:suggestedPoints('traffic','traffic-counting'), dwell:2, confidence:.25},
+    points:suggestedPoints('traffic','traffic-counting'), dwell:2, confidence:.25, segmentMetres:50},
   {id:'equipment-activity', title:'Equipment activity', capability:'machine_activity',
     points:suggestedPoints('machine_activity','equipment-activity'), dwell:.4, confidence:.25},
 ];
+const actionSteps = [
+  {id:'boxing-training', title:'Boxing training', capability:'action', points:[], dwell:2, confidence:.25},
+  {id:'staged-fall', title:'Staged fall', capability:'action', points:[], dwell:2, confidence:.25},
+] satisfies typeof demoSteps;
 const classFactors: Record<string, number> = {car:180, motorcycle:100, bus:900, truck:650};
 const factorSource = 'Illustrative demo factor. Replace with a documented factor for your vehicle, fuel or site.';
 type DemoResult = {run: Run; events: Incident[]};
@@ -44,9 +48,10 @@ async function waitForRun(id: string, signal: AbortSignal, onProgress: (run: Run
   throw new Error('The worker is taking longer than expected. Check the run in Monitoring studio.');
 }
 
-export default function AutomaticDemo({connected, workerOnline, refresh}: {
-  connected: boolean; workerOnline: boolean; refresh: () => void;
+export default function AutomaticDemo({connected, workerOnline, actionReady, refresh}: {
+  connected: boolean; workerOnline: boolean; actionReady: boolean; refresh: () => void;
 }) {
+  const steps: typeof demoSteps = actionReady ? [...demoSteps, ...actionSteps] : demoSteps;
   const active = useRef<AbortController | null>(null);
   const [results,setResults] = useState<DemoResult[]>([]);
   const [estimates,setEstimates] = useState<CarbonEstimate[]>([]);
@@ -75,7 +80,7 @@ export default function AutomaticDemo({connected, workerOnline, refresh}: {
     setError('');
     try {
       const completed: Run[] = [];
-      for (const [index,step] of demoSteps.entries()) {
+      for (const [index,step] of steps.entries()) {
         checkConnection();
         setStage(index);
         setProcessing(null);
@@ -84,7 +89,7 @@ export default function AutomaticDemo({connected, workerOnline, refresh}: {
           method:'POST', signal, body: JSON.stringify({source_id:source.id, rule:{
             capability:step.capability, name:`Demo · ${step.title}`, points:step.points,
             dwell_seconds:step.dwell, confidence:step.confidence, analysis_fps:6,
-            motion_threshold:.006, confirmed:true,
+            motion_threshold:.006, segment_metres:step.segmentMetres ?? null, confirmed:true,
           }}),
         });
         refresh();
@@ -95,12 +100,12 @@ export default function AutomaticDemo({connected, workerOnline, refresh}: {
         setResults(previous => [...previous,{run,events}]);
       }
       checkConnection();
-      setStage(demoSteps.length);
+      setStage(steps.length);
       const [,traffic,equipment] = completed;
       const trafficClasses = Object.keys(classFactors).filter(name => traffic.counts[name] > 0);
-      const roadInputs: DemoInput[] = (trafficClasses.length ? trafficClasses : ['car']).map(name => ({
+      const roadInputs: DemoInput[] = trafficClasses.map(name => ({
         name:`Road traffic · ${name}`,kind:'traffic',run_id:traffic.id,vehicle_class:name,quantity:0,
-        distance_km:.2,factor:classFactors[name],basis:'Detected crossings. The 0.2 km segment is an illustrative assumption.',
+        distance_km:.05,factor:classFactors[name],basis:'Completed traversals. The 50 m demo segment is an illustrative assumption.',
       }));
       const inputs: DemoInput[] = [...roadInputs,
         {name:'Conveyor · video runtime estimate',kind:'electricity',run_id:equipment.id,quantity:1.5,
@@ -126,23 +131,24 @@ export default function AutomaticDemo({connected, workerOnline, refresh}: {
 
   return <section className="panel automatic-demo" aria-label="Automatic demo">
     <div className="panel-heading">
-      <div><h2>Automatic demo</h2><p>Run the safety, traffic and conveyor clips, then see how their results feed carbon estimates.</p></div>
+      <div><h2>Automatic demo</h2><p>Run the example clips and see how traffic counts and equipment activity feed carbon estimates.</p></div>
       <MonitorPlay size={23}/>
     </div>
     <button className="button primary" type="button" disabled={!connected || !workerOnline || stage !== null}
       onClick={() => void start()}>{stage !== null ? 'Running demo…' : finished ? 'Run demo again' : 'Run automatic demo'}</button>
     {(!connected || !workerOnline) && <p className="small-note">Connect a backend with an active worker to run the demo.</p>}
     <p className="small-note">Uses the bundled clips and real analysis. Carbon previews use illustrative inputs, stay outside the ledger, and use no hosted vision credits.</p>
-    {stage !== null && <p role="status">{stage < demoSteps.length
-      ? `Step ${stage + 1} of 4 · ${demoSteps[stage].title}${processing ? ` · ${processing.progress}%` : ''}`
-      : 'Step 4 of 4 · Calculating carbon previews'}</p>}
+    {!actionReady && <p className="small-note">Upload the checkpoint in <a href="#settings">Settings</a> to include the boxing and fall clips.</p>}
+    {stage !== null && <p role="status">{stage < steps.length
+      ? "Step " + (stage + 1) + " of " + (steps.length + 1) + " · " + steps[stage].title + (processing ? " · " + processing.progress + "%" : "")
+      : "Step " + (steps.length + 1) + " of " + (steps.length + 1) + " · Calculating carbon previews"}</p>}
     {error && <p role="alert" className="error-text">{error}</p>}
     {results.map(({run,events}) => <section key={run.id} className="demo-result">
       <h3>{run.rule.name}</h3>
-      {run.rule.capability === 'zone' && <p>{events.length} rule observation(s) · <a href="#incidents">Open incident evidence</a></p>}
+      {(run.rule.capability === 'zone'||run.rule.capability === 'action') && <p>{events.length} rule observation(s) · <a href="#incidents">Open incident evidence</a></p>}
       {run.rule.capability === 'machine_activity' && <p>{run.activity_seconds?.toFixed(2)} seconds of visible motion</p>}
       <RunVideo run={run} events={events}/>
-      {run.rule.capability !== 'zone' && <a className="text-link" href={carbonLink(run)}>Calculate carbon from this run →</a>}
+      {(run.rule.capability === 'traffic'||run.rule.capability === 'machine_activity') && <a className="text-link" href={carbonLink(run)}>Calculate carbon from this run →</a>}
     </section>)}
     {finished && <div className="demo-result">
       <h3>Carbon estimate previews</h3>

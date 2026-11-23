@@ -1,9 +1,9 @@
 export type Page = 'overview' | 'studio' | 'videos' | 'demos' | 'incidents' | 'carbon' | 'reports' | 'how' | 'settings';
 export type Point = [number, number];
-export type Capability = 'zone' | 'traffic' | 'machine_activity';
+export type Capability = 'zone' | 'traffic' | 'machine_activity' | 'action';
 export interface DetectorOptions { confidence: number; image_size: 416 | 640 | 960 | 1280; iou_threshold: number; analysis_fps: number; vehicle_classes: ('car' | 'motorcycle' | 'bus' | 'truck')[] }
 export interface Source { id: string; name: string; duration: number; width: number; height: number; input_type: string; example_id?: string; created: number }
-export interface Rule { capability: Capability; name: string; instruction: string; points: Point[]; dwell_seconds: number; motion_threshold: number; recipients: string[]; alert_cooldown_seconds: number; recipient?: string; confirmed: true }
+export interface Rule { capability: Capability; name: string; instruction: string; points: Point[]; segment_metres?: number | null; action_confidence?: number; dwell_seconds: number; motion_threshold: number; recipients: string[]; alert_cooldown_seconds: number; recipient?: string; confirmed: true }
 export interface Crossing {
   source_seconds: number;
   track_id: number;
@@ -37,5 +37,6 @@ export interface Incident { id: string; run_id: string; title: string; detail: s
 export interface CarbonEstimate { name: string; kind: string; kg: number; label: string; formula: string; factor_source: string; basis: string; coverage: string; run_id?: string | null }
 export interface CarbonEntry extends CarbonEstimate { id: string; created: number }
 export interface Notification { id: string; status: string; subject: string; recipient: string; text: string; delivery?: string; error?: string }
-export interface Status { database?: {ready: boolean; engine: string; detail: string}; camera?: {configured:boolean; state:string; last_clip_at:number|null; protocol?:string; clip_seconds?:number; mode:string}; is_admin?: boolean; storage_used_mb?:number; storage_limit_mb?:number; worker_online: boolean; worker_age_seconds: number | null; email_mode: string; channels?: {email: string; telegram: {configured: boolean; chats: number; evidence?: boolean}}; ai_review: string; vision?: VisionStatus; recipients: string[]; max_upload_mb: number; max_video_seconds: number; deployment: string }
+export interface AnalysisModels { traffic: {detector: string; tracker: string}; action: {detector: string; classifier: string; checkpoint_present: boolean; upload_enabled: boolean} }
+export interface Status { models?: AnalysisModels; database?: {ready: boolean; engine: string; detail: string}; camera?: {configured:boolean; state:string; last_clip_at:number|null; protocol?:string; clip_seconds?:number; mode:string}; is_admin?: boolean; storage_used_mb?:number; storage_limit_mb?:number; worker_online: boolean; worker_age_seconds: number | null; email_mode: string; channels?: {email: string; telegram: {configured: boolean; chats: number; evidence?: boolean}}; ai_review: string; vision?: VisionStatus; recipients: string[]; max_upload_mb: number; max_video_seconds: number; deployment: string }
 export interface Data { status: Status | null; sources: Source[]; runs: Run[]; events: Incident[]; carbon: CarbonEntry[]; notifications: Notification[] }

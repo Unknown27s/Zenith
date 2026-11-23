@@ -9,10 +9,12 @@ class StrictModel(BaseModel):
 
 
 class Rule(StrictModel):
-    capability: Literal['zone', 'traffic', 'machine_activity']
+    capability: Literal['zone', 'traffic', 'machine_activity', 'action']
     name: str = Field(min_length=1, max_length=100)
     instruction: str = Field(default='', max_length=2000)
-    points: list[tuple[float, float]] = Field(min_length=2, max_length=12)
+    points: list[tuple[float, float]] = Field(max_length=12)
+    segment_metres: float | None = Field(default=None, gt=0, le=10000)
+    action_confidence: float = Field(default=0.6, ge=0.3, le=0.99)
     dwell_seconds: float = Field(default=2, ge=0.2, le=120)
     motion_threshold: float = Field(default=0.03, ge=0.001, le=0.9)
     confidence: float = Field(default=0.3, ge=0.1, le=0.9)
@@ -53,9 +55,20 @@ class Rule(StrictModel):
             raise ValueError('At most five notification recipients per rule')
         if any(not math.isfinite(v) or v < 0 or v > 1 for p in self.points for v in p):
             raise ValueError('Geometry must use normalized coordinates between 0 and 1')
-        if self.capability == 'traffic':
-            if len(self.points) != 2 or math.dist(*self.points) < 0.05:
-                raise ValueError('Draw a line with two distinct endpoints')
+        if self.capability == 'action':
+            if self.points:
+                raise ValueError('Fight and fall analysis watches the full frame without a region')
+        elif self.capability == 'traffic':
+            expected = 2 if self.segment_metres is None else 4
+            if len(self.points) != expected or any(
+                math.dist(self.points[i], self.points[i + 1]) < .05 for i in range(0, expected, 2)
+            ):
+                raise ValueError('Draw two endpoints for each traffic gate')
+            if expected == 4:
+                a,b,c,d = self.points
+                if not (a[0] < b[0] and c[0] < d[0] and
+                        max(a[1], b[1]) < min(c[1], d[1])):
+                    raise ValueError('Draw each gate left to right, with the entire first gate above the second')
         else:
             if len(self.points) < 3:
                 raise ValueError('Draw a polygon with at least three points')
@@ -72,6 +85,8 @@ class Rule(StrictModel):
                     a, b, c, d = self.points[i], self.points[(i+1)%n], self.points[j], self.points[(j+1)%n]
                     if cross(a,b,c)*cross(a,b,d) <= 0 and cross(c,d,a)*cross(c,d,b) <= 0:
                         raise ValueError('Zone edges must not intersect')
+        if self.capability != 'traffic' and self.segment_metres is not None:
+            raise ValueError('Road segment distance applies only to traffic')
         return self
 
 

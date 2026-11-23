@@ -15,17 +15,17 @@
   },
   {
     "id": "traffic-counting",
-    "title": "Vehicles at a highway interchange",
+    "title": "A40 motorway traffic from a fixed bridge camera",
     "capability": "traffic",
     "file": "traffic-counting.webm",
-    "seconds": 12,
-    "credit": "Artyom Svetlov / Wikimedia Commons",
+    "seconds": 20,
+    "credit": "Kathinka Engels / Sounds of Changes / Wikimedia Commons",
     "license": "CC BY 4.0",
     "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
-    "source": "https://commons.wikimedia.org/wiki/File:MKAD%E2%80%93Kashirskoye_Highway_interchange_2008-04_1207483200.webm",
-    "instruction": "Count vehicles crossing this line and show counts by vehicle class.",
-    "description": "Draw a finite line across one lane or carriageway. Verify crossings manually; perspective, small vehicles and camera movement can affect tracks.",
-    "changes": "12-second excerpt; resized/re-encoded as VP9 WebM with audio removed. Attribution retained; no detector results added."
+    "source": "https://commons.wikimedia.org/wiki/File:Motorway_A40_-_on_bridge_above_the_traffic.webm",
+    "instruction": "Count vehicles that cross both road gates by vehicle class.",
+    "description": "The suggested gates span the approaching carriageway. Carbon previews use an illustrative 50 m segment and example factors.",
+    "changes": "20-second excerpt, resized and re-encoded as VP9 WebM with audio removed."
   },
   {
     "id": "equipment-activity",
@@ -40,5 +40,33 @@
     "instruction": "Observe sustained visible machine activity inside this region.",
     "description": "Select a region around the visible conveyor. This demonstrates a motion proxy, not electrical ON/OFF measurement or actual emissions.",
     "changes": "5.8-second excerpt; resized/re-encoded as VP9 WebM with audio removed. Adaptation distributed under CC BY-SA 4.0; no detector results added."
+  },
+  {
+    "id": "boxing-training",
+    "title": "Boxing training",
+    "capability": "action",
+    "file": "boxing-training.webm",
+    "seconds": 10,
+    "credit": "Evworo / Wikimedia Commons",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Boxing_training.webm",
+    "instruction": "Review possible fights and falls.",
+    "description": "Sports training clip for checking how the classifier handles fight-like motion. Review any alert in its sporting context.",
+    "changes": "Resized and re-encoded as VP9 WebM with audio removed. Adaptation remains CC BY-SA 3.0."
+  },
+  {
+    "id": "staged-fall",
+    "title": "Staged indoor fall",
+    "capability": "action",
+    "file": "staged-fall.webm",
+    "seconds": 6.85,
+    "credit": "Ekram Alam et al. / GMDCSA-24, Subject 1 / Fall / 01",
+    "license": "MIT (dataset repository)",
+    "licenseUrl": "https://github.com/ekramalam/GMDCSA24-A-Dataset-for-Human-Fall-Detection-in-Videos/blob/master/LICENSE",
+    "source": "https://github.com/ekramalam/GMDCSA24-A-Dataset-for-Human-Fall-Detection-in-Videos/blob/master/Subject%201/Fall/01.mp4",
+    "instruction": "Review possible fights and falls.",
+    "description": "A staged fall from the GMDCSA-24 research dataset for testing human-reviewed fall observations.",
+    "changes": "Resized and re-encoded as VP9 WebM with audio removed."
   }
 ]
