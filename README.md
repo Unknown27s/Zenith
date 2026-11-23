@@ -101,15 +101,15 @@ docker compose up --build
 Open http://127.0.0.1:8080. Read the shared local `data/operator.key` unless you explicitly set `ZENITH_API_KEY`. If Docker created the key as root, retrieve it privately with `docker compose exec api cat /data/operator.key`. PostgreSQL uses a named volume; source/evidence use `./data`. SQLite laptop records do not automatically migrate to Compose. The shared `:z` bind label supports Fedora SELinux. CPU images can be large; the first build and model download need network access. Compose is supplied but not claimed validated unless actually run.
 
 ## Colab backend
-See [docs/COLAB.md](docs/COLAB.md) and [notebooks/Zenith_Colab.ipynb](notebooks/Zenith_Colab.ipynb). Run `python scripts/package_colab.py` to create `artifacts/zenith-colab.zip`. Includes notebook-native interaction and an optional temporary HTTPS tunnel. Respect managed runtime restrictions; free Colab is not a dependable web backend. No keepalive or policy bypass mechanisms.
+See [docs/COLAB.md](docs/COLAB.md) and [notebooks/Zenith_Colab.ipynb](notebooks/Zenith_Colab.ipynb). Run `npm ci` and then `python scripts/package_colab.py` to build `artifacts/zenith-colab.zip` with the backend and dashboard. The notebook supports interactive processing and an optional temporary HTTPS dashboard link. Respect managed runtime restrictions; free Colab is not a dependable web backend. No keepalive or policy bypass mechanisms.
 
 ## Safety, persistence and limits
 - One operator key, constant-time authentication, hashed-key ownership on sources/runs/events/carbon/reports and protected artifact fetches. This is **not** production multi-tenant authentication. Rotating the key changes ownership visibility; back up the key securely with the database.
 - SQLite WAL for laptop/Colab; PostgreSQL for Compose. One worker, 90-second leased jobs renewed by heartbeat, deterministic per-run event IDs. Interrupted inference restarts from the source; partial events remain labelled through incomplete run coverage.
 - At most three queued/processing jobs checked by API and thirty uploaded clips; limit sources to short video. Single-operator demo concurrency only, not robust public rate limiting. Put strict body, rate, CPU/time and storage quotas in a reverse proxy before exposing it. Do not accept untrusted customer footage in this MVP.
 - Media decoding runs on the host, not a sandbox. Updates, isolation and resource controls are required before handling hostile uploads. No remote URLs or RTSP credentials are accepted.
-- No automatic retention policy, user deletion UI, database migrations, full health watchdog, camera connector, cloud storage, escalation, replay bundle or Gemini review yet.
-- All data is local by default. Colab/ngrok and optional email introduce third parties. Do not upload private customer footage without authorization.
+- No automatic retention policy, user deletion UI, database migrations, full health watchdog, camera connector, cloud storage, escalation or replay bundle yet.
+- All data is local by default. Colab/ngrok, hosted NVIDIA review and optional email introduce third parties. Do not upload private customer footage without authorization.
 - Review Ultralytics code/model licensing (AGPL/enterprise options) and footage rights before commercial deployment.
 
 ## Verification record

@@ -16,7 +16,7 @@ export async function ensureLocalSession(signal?: AbortSignal) {
       : 'This hosted page cannot reach a backend. Enter your HTTPS backend origin and operator key in Connection Settings, then verify.');
   }
   if (!response.ok) throw new Error(!localHost()
-    ? 'This Vercel page has no backend. Set VITE_API_BASE_URL to your HTTPS FastAPI origin and redeploy, or enter that origin plus operator key in Connection Settings.'
+    ? 'Enter the operator key in Connection Settings. If the dashboard and backend use separate addresses, enter the backend HTTPS origin as well.'
     : response.status === 404 || response.status === 405
       ? 'An older backend is running. Restart it with python start.py --local.'
       : 'Local session is unavailable. Use the operator key in Connection Settings, or start the laptop app with python start.py --local.');

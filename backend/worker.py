@@ -12,8 +12,9 @@ import httpx
 import numpy as np
 from sqlalchemy import or_, select, update
 
-from .config import DATA, RECIPIENTS
-from .db import Incident, Notification, Run, Session, Source, init_db
+from .config import DATA, RECIPIENTS, VISION_AUTO_LIMIT
+from .db import Incident, Notification, Run, Session, Source, VisionReview, init_db
+from .vision import process_one_review
 
 log = logging.getLogger('zenith.worker')
 logging.basicConfig(level=logging.INFO)
@@ -56,7 +57,7 @@ def update_run(run_id, token, **changes):
         session.commit()
 
 
-def save_incident(run, token, frame_index, timestamp, title, detail, frames):
+def save_incident(run, token, frame_index, timestamp, title, detail, frames, auto_review):
     event_id = hashlib.sha256(f'{run.id}:{frame_index}:{title}:{detail}'.encode()).hexdigest()[:40]
     with Session() as session:
         current = session.get(Run, run.id)
@@ -77,6 +78,8 @@ def save_incident(run, token, frame_index, timestamp, title, detail, frames):
             'detector_settings': {key: run.payload['rule'].get(key) for key in ('confidence', 'image_size', 'iou_threshold', 'analysis_fps', 'vehicle_classes')},
             'ai_review': 'not_enabled', 'operator_status': 'suspected', 'history': []})
         session.add(event)
+        if auto_review and names:
+            session.add(VisionReview(id=event_id, owner=run.owner, run_id=run.id, payload=auto_review))
         recipient = run.payload['rule'].get('recipient')
         if recipient and recipient in RECIPIENTS:
             # Incident and outbox commit together; deterministic ID prevents duplicate tasks.
@@ -242,7 +245,8 @@ def analyze(run_id, token):
                     raise ValueError('Incident limit reached; shorten the clip or tune the rule. Coverage is incomplete.')
                 before = next((image for t, image in reversed(history) if t <= timestamp-1), None)
                 frames = ([('before', before)] if before is not None else []) + [('during', annotated)]
-                event_id = save_incident(run, token, frame_index, timestamp, title, detail, frames)
+                event_id = save_incident(run, token, frame_index, timestamp, title, detail, frames,
+                                         run.payload.get('vision_authorization') if event_count < VISION_AUTO_LIMIT else None)
                 pending_after.append((event_id, timestamp+1))
                 event_count += 1
             history.append((timestamp, annotated.copy()))
@@ -341,6 +345,11 @@ def main():
                     log.exception('Could not persist failure')
             finally:
                 current.update(run_id=None, token=None)
+        else:
+            try:
+                process_one_review()
+            except Exception:
+                log.exception('Vision review queue processing failed')
         time.sleep(1)
 
 

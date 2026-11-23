@@ -85,3 +85,13 @@ def serialize(row):
     if isinstance(row, Notification):
         result['status'] = row.status
     return result
+
+
+class VisionReview(Record):
+    __tablename__ = 'vision_reviews'
+
+    # Primary key is the incident ID. Keep review writes independent of operator history.
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(24), default='queued', index=True)
+    lease: Mapped[float] = mapped_column(Float, default=0)
+    lease_token: Mapped[str] = mapped_column(String(64), default='')

@@ -1,7 +1,7 @@
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -54,6 +54,8 @@ class Rule(StrictModel):
 class RunRequest(StrictModel):
     source_id: str = Field(max_length=64)
     rule: Rule
+    vision_provider: Literal['nvidia', 'local'] | None = None
+    vision_consent: StrictBool = False
 
 
 class ProposalRequest(StrictModel):
@@ -94,3 +96,16 @@ class CarbonRequest(StrictModel):
         if not value.strip():
             raise ValueError('Cannot be blank')
         return value.strip()
+
+
+
+class VisionReviewRequest(StrictModel):
+    provider: Literal['nvidia', 'local']
+    consent: StrictBool = False
+
+
+class VisionInterpretation(StrictModel):
+    model_config = ConfigDict(strict=True)
+
+    summary: str = Field(min_length=1, max_length=600, pattern=r'\S')
+    limitations: str = Field(min_length=1, max_length=400, pattern=r'\S')

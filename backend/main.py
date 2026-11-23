@@ -18,8 +18,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, text
 
 from .config import DATA, MAX_DURATION, MAX_UPLOAD, RECIPIENTS, TOKEN
-from .db import Carbon, Equipment, Incident, Notification, Run, Session, Source, init_db, serialize
-from .schemas import Action, CarbonRequest, EquipmentRequest, EquipmentStateRequest, ProposalRequest, RunRequest
+from .db import Carbon, Equipment, Incident, Notification, Run, Session, Source, VisionReview, init_db, serialize
+from .schemas import Action, CarbonRequest, EquipmentRequest, EquipmentStateRequest, ProposalRequest, RunRequest, VisionReviewRequest
+from . import vision
 
 log = logging.getLogger('zenith')
 logging.basicConfig(level=logging.INFO)
@@ -105,11 +106,17 @@ def health():
 def status(identity=Depends(owner)):
     heartbeat = DATA / 'worker.heartbeat'
     age = time.time() - heartbeat.stat().st_mtime if heartbeat.exists() else None
+    vision_status = vision.provider_status()
     return {'worker_online': age is not None and age < 45, 'worker_age_seconds': age,
             'email_mode': 'configured' if os.getenv('RESEND_API_KEY') and os.getenv('ZENITH_FROM_EMAIL') else 'preview',
-            'ai_review': 'not_implemented', 'recipients': RECIPIENTS, 'max_upload_mb': MAX_UPLOAD // (1024*1024),
+            'ai_review': vision_status['provider'], 'vision': vision_status, 'recipients': RECIPIENTS, 'max_upload_mb': MAX_UPLOAD // (1024*1024),
             'max_video_seconds': MAX_DURATION, 'deployment': 'single-operator demo',
             'capabilities': ['zone', 'traffic', 'machine_activity']}
+
+
+@app.get('/api/vision/status')
+def vision_status(identity=Depends(owner)):
+    return vision.probe()
 
 
 @app.get('/api/sources')
@@ -243,6 +250,12 @@ def propose(body: ProposalRequest, identity=Depends(owner)):
 def create_run(body: RunRequest, identity=Depends(owner)):
     if body.rule.recipient and body.rule.recipient not in RECIPIENTS:
         raise HTTPException(400, 'Recipient is not configured')
+    approval = None
+    if body.vision_provider:
+        try:
+            approval = vision.authorization(body.vision_provider, body.vision_consent)
+        except vision.ReviewError as exc:
+            raise HTTPException(409, str(exc)) from exc
     with Session() as session:
         # Serialize the capacity check with enqueue across this operator's sources.
         if session.bind.dialect.name == 'sqlite':
@@ -254,6 +267,8 @@ def create_run(body: RunRequest, identity=Depends(owner)):
         if active >= 3:
             raise HTTPException(429, 'Three jobs are already pending; wait for one to finish')
         run = Run(owner=identity, payload={'source_id': source.id, 'source_name': source.payload['name'], 'rule': body.rule.model_dump(), 'progress': 0, 'stage': 'Waiting for analysis worker', 'counts': {}, 'coverage': 'pending'})
+        if approval:
+            run.payload = {**run.payload, 'vision_authorization': approval}
         session.add(run)
         session.commit()
         log.info('Queued analysis %s', run.id)
@@ -275,14 +290,16 @@ def get_run(run_id: str, identity=Depends(owner)):
 @app.get('/api/events')
 def events(identity=Depends(owner)):
     with Session() as session:
-        return [serialize(x) for x in session.scalars(select(Incident).where(Incident.owner == identity).order_by(Incident.created.desc()).limit(300))]
+        return vision.incident_views(session, list(session.scalars(
+            select(Incident).where(Incident.owner == identity).order_by(Incident.created.desc()).limit(300))))
 
 
 @app.get('/api/runs/{run_id}/events')
 def run_events(run_id: str, identity=Depends(owner)):
     with Session() as session:
         owned(session, Run, run_id, identity)
-        return [serialize(x) for x in session.scalars(select(Incident).where(Incident.owner == identity, Incident.run_id == run_id))]
+        return vision.incident_views(session, list(session.scalars(
+            select(Incident).where(Incident.owner == identity, Incident.run_id == run_id))))
 
 
 @app.post('/api/events/{event_id}/acknowledge')
@@ -292,7 +309,44 @@ def acknowledge(event_id: str, body: Action, identity=Depends(owner)):
         row.payload = {**row.payload, 'operator_status': body.action, 'history': [*row.payload.get('history', []), {'action': body.action, 'note': body.note, 'at': time.time(), 'actor': 'Demo operator'}]}
         session.commit()
         log.info('Operator action %s on %s', body.action, event_id)
-        return serialize(row)
+        return vision.incident_view(row, session.get(VisionReview, event_id))
+
+
+@app.get('/api/events/{event_id}/review')
+def get_review(event_id: str, identity=Depends(owner)):
+    with Session() as session:
+        owned(session, Incident, event_id, identity)
+        return vision.review_view(session.get(VisionReview, event_id))
+
+
+@app.post('/api/events/{event_id}/review', status_code=202)
+def request_review(event_id: str, body: VisionReviewRequest, identity=Depends(owner)):
+    with Session() as session:
+        if session.bind.dialect.name == 'sqlite':
+            session.execute(text('BEGIN IMMEDIATE'))
+        else:
+            session.execute(select(Incident).where(
+                Incident.id == event_id, Incident.owner == identity).with_for_update())
+        event = owned(session, Incident, event_id, identity)
+        try:
+            approval = vision.authorization(body.provider, body.consent)
+        except vision.ReviewError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not event.payload.get('frames'):
+            raise HTTPException(409, 'This incident has no evidence frames')
+        row = session.get(VisionReview, event_id)
+        if row and row.status in {'queued', 'processing'}:
+            return vision.review_view(row)
+        if row is None:
+            row = VisionReview(id=event_id, owner=identity, run_id=event.run_id)
+            session.add(row)
+        row.status = 'queued'
+        row.created = time.time()
+        row.payload = approval
+        row.lease = 0
+        row.lease_token = ''
+        session.commit()
+        return vision.review_view(row)
 
 
 @app.get('/api/events/{event_id}/evidence/{frame_id}')

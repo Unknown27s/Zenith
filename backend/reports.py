@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from .config import DATA
 from .db import Carbon, Equipment, Incident, Run
+from .vision import incident_views
 
 
 def build_report(session, owner, format, run_id):
@@ -68,10 +69,13 @@ def build_report(session, owner, format, run_id):
     text('Safety evidence', 'Heading1')
     if not events:
         text('No incidents recorded within this selection. This is not proof that the footage is safe.')
-    for event in events:
-        p = event.payload
+    for p in incident_views(session, events):
         text(f"{p['title']} · source {p['source_seconds']:.2f}s", 'Heading2')
         text(f"{p['detail']} Operator: {p['operator_status']}. AI review: {p.get('ai_review', 'unavailable')}.")
+        review = p['vision_review']
+        if review['status'] == 'completed':
+            text(f"Vision model interpretation ({review['model']}): {review['summary']}")
+            text(f"Limitations: {review['limitations']}")
         for frame in p.get('frames', []):
             path = DATA / 'evidence' / frame
             if path.is_file():
@@ -102,6 +106,6 @@ def build_report(session, owner, format, run_id):
             for entry in p['history']:
                 at = datetime.fromtimestamp(entry['at'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
                 text(f"{at}: {entry['from']} -> {entry['to']}; {entry['note']}")
-    text('Camera outages: not monitored in this file-analysis MVP. Three-frame AI review, live connector, collapse/PPE and escalation are not enabled.')
+    text('Camera outages: not monitored in this file-analysis MVP. Live connector, collapse/PPE and escalation are not enabled.')
     SimpleDocTemplate(output, title='Zenith report', author='Team Zenith', rightMargin=40, leftMargin=40).build(story)
     return Response(output.getvalue(), media_type='application/pdf', headers={'Content-Disposition': 'attachment; filename=zenith-report.pdf'})
