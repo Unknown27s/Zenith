@@ -26,6 +26,7 @@ DATABASE_URL = os.getenv('DATABASE_URL', f'sqlite:///{DATA / "zenith.db"}')
 RECIPIENTS = [x.strip() for x in os.getenv('ZENITH_RECIPIENTS', '').split(',') if x.strip()]
 MAX_UPLOAD = int(os.getenv('MAX_UPLOAD_MB', '100')) * 1024 * 1024
 MAX_DURATION = int(os.getenv('MAX_VIDEO_SECONDS', '180'))
+STORAGE_LIMIT = int(os.getenv('ZENITH_STORAGE_LIMIT_MB', '500')) * 1024 * 1024
 
 VISION_PROVIDER = os.getenv('VISION_PROVIDER', 'off').strip().lower()
 NVIDIA_API_KEY = os.getenv('NVIDIA_API_KEY', '').strip()

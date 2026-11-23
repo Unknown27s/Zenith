@@ -13,8 +13,8 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer
 from sqlalchemy import select
 
 from .config import DATA
-from .db import Carbon, Equipment, Incident, Run
-from .vision import incident_views
+from .db import Carbon, Equipment, Incident, Run, RunSummary
+from .vision import incident_views, review_view
 
 
 def build_report(session, owner, format, run_id):
@@ -27,6 +27,8 @@ def build_report(session, owner, format, run_id):
         carbon_query = carbon_query.where(Carbon.payload['run_id'].as_string() == run_id)
     events = list(session.scalars(query))
     runs = list(session.scalars(run_query))
+    summaries = {row.id: row for row in session.scalars(select(RunSummary).where(
+        RunSummary.id.in_([run.id for run in runs]), RunSummary.owner == owner))} if runs else {}
     carbon = list(session.scalars(carbon_query))
     equipment = list(session.scalars(select(Equipment).where(Equipment.owner == owner))) if not run_id else []
     if format == 'csv':
@@ -43,7 +45,13 @@ def build_report(session, owner, format, run_id):
             p = row.payload
             writer.writerow([safe(x) for x in ['carbon estimate', row.id, p.get('run_id', ''), p['coverage'], p['kg'], f"{p['formula']}; factor source: {p['factor_source']}; basis: {p['basis']}"]])
         for row in runs:
-            writer.writerow([safe(x) for x in ['run', row.id, row.payload['source_name'], row.status, '', str(row.payload.get('counts', {}))]])
+            details = [f"Raw counts: {row.payload.get('counts', {})}",
+                       f"Run summary: {row.payload.get('findings', {}).get('summary', 'unavailable')}",
+                       f"Crossing reviews: {row.payload.get('crossing_reviews', {})}"]
+            summary = review_view(summaries.get(row.id))
+            if summary['status'] == 'completed':
+                details += [f"Vision summary: {summary['summary']}", f"Vision limitations: {summary['limitations']}"]
+            writer.writerow([safe(x) for x in ['run', row.id, row.payload['source_name'], row.status, '', '; '.join(details)]])
         for row in equipment:
             p = row.payload
             hours = (p['on_seconds'] + (max(0, time.time()-p['state_since']) if p['state'] == 'on' else 0))/3600
@@ -59,11 +67,20 @@ def build_report(session, owner, format, run_id):
         story.append(Spacer(1, 8))
     text('ZENITH | Safety & carbon report', 'Title')
     text(datetime.now(timezone.utc).strftime('Generated %Y-%m-%d %H:%M UTC'))
-    text('Single-operator demonstration. Suspected observations require human review. Emissions are estimates, not sensor measurements or a complete inventory.')
+    text('Operator-key workspace. Suspected observations require human review. Emissions are estimates, not sensor measurements or a complete inventory.')
     for run in runs:
         text(f"Run {run.id} · {run.payload['source_name']}", 'Heading2')
         text(f"Status: {run.status}; coverage: {run.payload.get('coverage')}; model/rule: {run.payload['rule']['capability']} / v1")
         text(f"Vehicle crossings: {run.payload.get('counts', {})}; activity proxy seconds: {run.payload.get('activity_seconds', 'N/A')}")
+        if run.payload.get('findings'):
+            text(f"Analysis summary: {run.payload['findings']['summary']}")
+            text(f"Limitations: {run.payload['findings']['limitations']}")
+        summary = review_view(summaries.get(run.id))
+        if summary['status'] == 'completed':
+            text(f"Sampled-frame vision summary ({summary['model']}): {summary['summary']}")
+            text(f"Vision limitations: {summary['limitations']}")
+        for track_id, review in run.payload.get('crossing_reviews', {}).items():
+            text(f"Crossing #{track_id}: {review['action']}; operator note: {review['note']}")
         if run.payload.get('analysis_settings'):
             text(f"Actual analysis configuration: {run.payload['analysis_settings']}")
     text('Safety evidence', 'Heading1')
@@ -106,6 +123,6 @@ def build_report(session, owner, format, run_id):
             for entry in p['history']:
                 at = datetime.fromtimestamp(entry['at'], timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
                 text(f"{at}: {entry['from']} -> {entry['to']}; {entry['note']}")
-    text('Camera outages: not monitored in this file-analysis MVP. Live connector, collapse/PPE and escalation are not enabled.')
+    text('RTSP clips are delayed file analysis; stream outages are not covered by a full health watchdog. Collapse/PPE and escalation are not enabled.')
     SimpleDocTemplate(output, title='Zenith report', author='Team Zenith', rightMargin=40, leftMargin=40).build(story)
     return Response(output.getvalue(), media_type='application/pdf', headers={'Content-Disposition': 'attachment; filename=zenith-report.pdf'})

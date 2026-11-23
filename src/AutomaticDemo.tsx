@@ -3,16 +3,17 @@ import { MonitorPlay } from 'lucide-react';
 import { connection, json } from './api';
 import RunVideo, { carbonLink } from './RunVideo';
 import type { Capability, CarbonEstimate, Incident, Point, Run, Source } from './types';
+import { suggestedPoints } from './geometry';
 
 const demoSteps: {
   id: string; title: string; capability: Capability; points: Point[]; dwell: number; confidence: number;
 }[] = [
   {id:'people-zone', title:'Safety zone', capability:'zone',
-    points:[[.01,.01],[.99,.01],[.99,.99],[.01,.99]], dwell:.2, confidence:.15},
+    points:suggestedPoints('zone','people-zone'), dwell:.2, confidence:.15},
   {id:'traffic-counting', title:'Traffic crossings', capability:'traffic',
-    points:[[.42,.63],[.42,.90]], dwell:2, confidence:.25},
+    points:suggestedPoints('traffic','traffic-counting'), dwell:2, confidence:.25},
   {id:'equipment-activity', title:'Equipment activity', capability:'machine_activity',
-    points:[[.10,.15],[.90,.15],[.90,.90],[.10,.90]], dwell:.4, confidence:.25},
+    points:suggestedPoints('machine_activity','equipment-activity'), dwell:.4, confidence:.25},
 ];
 const classFactors: Record<string, number> = {car:180, motorcycle:100, bus:900, truck:650};
 const factorSource = 'Illustrative demo factor. Replace with a documented factor for your vehicle, fuel or site.';

@@ -8,7 +8,7 @@ Metadata was checked through Kaggle's public dataset API. An uploader's license 
 
 | Source | Reported size / license | Use and limitations |
 |---|---|---|
-| [Highway Traffic Videos](https://www.kaggle.com/datasets/aryashah2k/highway-traffic-videos-dataset) | ~63 MB; uploader lists CC0 | Fixed highway CCTV; description credits Washington State DOT and requests Chan/Vasconcelos citation. It reports a corrupted first frame; inspect/trim before upload. [ZIP download](https://www.kaggle.com/api/v1/datasets/download/aryashah2k/highway-traffic-videos-dataset) responded with ZIP content to a ranged GET when checked. No clip was downloaded, bundled or inference-validated. |
+| [Highway Traffic Videos](https://www.kaggle.com/datasets/aryashah2k/highway-traffic-videos-dataset) | Kaggle reports ~92 MB dataset; uploader lists CC0 | Fixed highway CCTV; description credits Washington State DOT and requests Chan/Vasconcelos citation. It reports a corrupted first frame; inspect/trim before upload. [ZIP download](https://www.kaggle.com/api/v1/datasets/download/aryashah2k/highway-traffic-videos-dataset) returned HTTP 404 from this environment on November 23, 2026. No Kaggle clip was bundled or inference-validated. Download via your own Kaggle session after checking reuse rights. |
 | [AAU RainSnow](https://www.kaggle.com/datasets/aalborguniversity/aau-rainsnow) | ~3.39 GB; CC BY 4.0 | RGB/thermal sequences and frame-pair annotations; attribution/citation needed. Prepare a short RGB clip. Not a lightweight one-click demo video. |
 | [Multiple Cameras Fall Dataset](https://www.kaggle.com/datasets/soumicksarker/multiple-cameras-fall-dataset) | ~3.78 GB; “Other” license | Research reference only until rights are clarified. Falls and normal activities; collapse detector remains unavailable in this build. |
 
@@ -18,7 +18,7 @@ No emission factors can be recovered reliably from these datasets. Traffic facto
 
 ## One-click walkthrough
 
-Connect the dashboard to a backend with a live worker and select **Demo footage → Run automatic demo**. The dashboard imports the three bundled clips in order and submits real jobs with preset geometry. The results show the safety observations, vehicle crossings, equipment motion and carbon previews. You can open each source video or jump to a timestamp from the result.
+Connect the dashboard to a backend with a live worker and select **Demo footage → Run automatic demo**. The dashboard imports the three bundled clips in order and submits real jobs with preset geometry. **Use in studio** also prefills an editable line or region, so you do not need to draw one; inspect and confirm the suggestion before running. The results show the safety observations, vehicle crossings, equipment motion and carbon previews. You can open each source video or jump to a timestamp from the result.
 
 Traffic, visible equipment motion, metered kWh and litres appear as separate calculation examples. Demo factors and operator inputs are illustrative and the previews do not enter the carbon ledger. The demo does not opt in to hosted vision or send email. Imported footage and completed runs appear in the same workspace as manual runs.
 

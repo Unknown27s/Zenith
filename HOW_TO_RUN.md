@@ -17,7 +17,7 @@ On Linux/macOS the command may be `python3 start.py`. On Windows with the Python
 
 The launcher prepares `.venv`, builds/uses the website, initializes the selected database and starts the API plus analysis worker. Nothing is installed into global Python site-packages. Initial setup can take several minutes.
 
-Open **http://127.0.0.1:8000/#demos**. The browser should open automatically. The loopback-only laptop app connects automatically using a short-lived HttpOnly session cookie, without revealing the permanent operator key. This requires starting with the launcher; manually launched or remote backends require the key. For manual or remote Connection Settings:
+Open **http://127.0.0.1:8000/#demos**. The browser should open automatically. Initially the loopback-only laptop app connects using a short-lived HttpOnly session cookie, without revealing the permanent operator key. Once separate operator keys have been created in Settings, automatic local access is disabled for every user: use each user's own key instead. Manually launched or remote backends also require a key. For Connection Settings:
 1. Leave **API origin blank** for this same-origin laptop setup.
 2. Open `data/operator.key` privately and copy its contents into the **operator key** field. If `.env` sets `ZENITH_API_KEY`, use that value instead.
 3. Click **Verify & connect**. A fresh worker heartbeat means the analysis process is available.
@@ -53,7 +53,7 @@ Open **Demo Footage** in the sidebar. Three actual short source excerpts are inc
 Each card has playback, download, source credit/license and **Use in studio**. The source footage is not pre-generated detection output. Credits and adaptation terms are in `public/examples/ATTRIBUTION.md` and accompany the public assets. The people clip depicts normal street activity; a region you draw is a fictional demo zone, not evidence of an actual access violation.
 
 1. Connect the backend, then click **Use in studio** on an example.
-2. Inspect its preview. Draw at least three polygon vertices for a zone/equipment region, or exactly two endpoints for a traffic line.
+2. Inspect its preview and the suggested region or counting line. Drawing is optional: Studio fills in a starting polygon for zones/equipment and a line for traffic. Use Clear and click to draw your own geometry, or Reset suggestion to start over. Suggested geometry is not scene understanding or camera calibration; review it before confirming.
 3. Choose the capability and inspect the input-specific analysis settings. Presets are starting values, not calibrated accuracy claims:
    - People: confidence 0.35, 640 px, IoU 0.7, requested 8 FPS, person class only.
    - Traffic: confidence 0.25, 960 px, IoU 0.6, requested 10 FPS, selected car/motorcycle/bus/truck classes.
@@ -62,7 +62,7 @@ Each card has playback, download, source credit/license and **Use in studio**. T
 5. Click **Run analysis**. The actual model/worker runs on the source frames. Inference size/confidence/FPS/IoU/class selection are stored with the run and included in its report. Detector accuracy still requires scene-specific review.
 6. Inspect **Incidents & evidence**, record an operator action, and download a report. An alert/count is only shown if the real rule produces it; no particular outcome is guaranteed by an example link.
 
-You can also upload permitted MP4/MOV/AVI/MKV/WebM clips (default 100 MB / 180 s limit). Additional Kaggle dataset links remain in Demo Footage, with size/license caveats.
+You can also upload permitted MP4/MOV/AVI/MKV/WebM clips (default 100 MB / 180 s limit). In Studio, **Open camera → Record short clip** captures up to 12 seconds from a local browser camera on HTTPS or localhost; stop to upload it and close the camera after use. It is not unattended CCTV/RTSP streaming. Describe one supported rule, review the suggested line or region, confirm it, then run analysis. **Video findings → select a video** opens its own analysis page with the saved summary, timestamp timeline, source playback, evidence thumbnails, crossing annotations and PDF/CSV reports for each run. Mark false crossings with a reason; raw detector counts and previously saved carbon estimates remain unchanged for audit. Incident observations can be dismissed with an operator note in **Incidents & evidence**. The optional NVIDIA sampled-frame summary requires backend sharing permission and explicit per-run consent; rule output summaries work without AI. Additional Kaggle dataset links remain in Demo Footage, with size/license caveats.
 
 ## Carbon and machine ON/OFF
 
@@ -73,6 +73,35 @@ Open **Carbon & energy**:
 - Operator machine log: record **ON / OFF / UNKNOWN** with a basis note; logged ON time accrues until the next declaration. Record UNKNOWN when observation stops. This is not automatic state sensing.
 
 No numeric emission factors are invented. Add the applicable source, units, activity basis and uncertainty. CCTV motion is not proof of electrical power, fuel use or emissions. CO₂ and CO₂e estimates are labelled separately.
+
+**Saved site factors:** In Carbon & energy, save a factor with its original citation, region, year, unit implied by activity kind, and vehicle class for traffic. Select it in the calculator. The server uses the saved factor value (not a modified browser number) and verifies the traffic class matches. A linked run supplies counts or a clearly labelled runtime proxy; a real meter or fuel record still needs operator input.
+
+## RTSP/IP camera or HTTPS HLS stream on this laptop (optional)
+
+Keep the RTSP URL and password **server-side only** in `.env`; do not paste them into the browser, a chat, or frontend build variables:
+
+```dotenv
+ZENITH_RTSP_URL=rtsp://YOUR_CAMERA_HOST:554/YOUR_PRIVATE_STREAM_PATH
+ZENITH_STORAGE_LIMIT_MB=500
+```
+
+Alternatively use `ZENITH_CAMERA_URL=https://YOUR_PERMISSIONED_STREAM/playlist.m3u8` for an HTTPS HLS stream. `ZENITH_CAMERA_URL` takes precedence over `ZENITH_RTSP_URL`. Only explicit RTSP/RTSPS ports and HTTPS `.m3u8` paths are accepted. A publicly reachable prerecorded test stream can validate network ingestion, but is **not a live security camera**.
+
+For a no-credential **prerecorded test** (not CCTV), use `ZENITH_CAMERA_URL=https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8` temporarily, or run `python scripts/smoke_stream.py` to test it against an isolated temporary database. The sample is [Big Buck Bunny](https://peach.blender.org/), © Blender Foundation, CC BY 3.0, hosted by Mux for HLS playback testing. It is not packaged as a Zenith example, and it cannot validate camera uptime or traffic counting. Remove the URL or set your own permitted stream after testing.
+
+Restart API and worker. In Studio, click **Preview stream** (requires access to your stream), check the visible rule geometry, describe one supported rule, confirm it, then click **Start stream analysis**. It records approximately 12-second clips for queued worker analysis; stop from Studio when done. The recording and queue stop at 30 source clips, three pending jobs, or the per-operator source storage limit. A failed connection retries after five seconds. There are no low-latency alerts, automatic deletion, distributed leader election, or validated camera reconnect guarantees. One API process and one network stream are supported; the backend-only URL is never returned in API responses. The existing browser webcam can still record short clips without network setup.
+
+## Separate laptop operator keys and backup
+
+In **Settings → Local operator access**, the administrator can issue a unique key for each operator. Copy it immediately and use it in that operator's Connection Settings. Records are isolated by operator; revoke a key to stop access, not to erase its records. Once any key is issued, automatic local sessions stop working. This is local key-based access, not Supabase Auth or hardened public multi-tenant hosting.
+
+Stop the API, worker and RTSP camera before backing up. For a SQLite laptop, run:
+
+```sh
+python scripts/backup_local.py artifacts/private-zenith-backup.zip
+```
+
+The archive includes a SQLite snapshot, locally stored source clips/evidence and `data/operator.key` if present. With PostgreSQL, install `pg_dump` first; the same command exports the configured private schema. The ZIP is **unencrypted and sensitive**: store it securely, encrypt it before moving it, and back up `ZENITH_API_KEY` separately if it was set in `.env`. It does not include `.env`. Restore requires stopping services and restoring the database and media together; PostgreSQL restore has not been tested. `python scripts/smoke_video.py` runs a real packaged traffic clip in an isolated temporary SQLite database; `python scripts/smoke_services.py` checks local keys, saved factors and an offline SQLite backup.
 
 ## Supabase database (optional)
 
@@ -87,15 +116,19 @@ Do not use the placeholder host literally. Percent-encode reserved characters in
 
 The private schema must not be exposed through Supabase's public Data API. Supabase Auth/Storage browser adapters are **not implemented**. Evidence still resides on the backend disk. See `docs/DEPLOYMENT.md` for connection, security and migration caveats. A failing hostname/password blocks cloud startup; use `--local` deliberately rather than silently falling back.
 
-## NVIDIA key (optional future vision review)
+## NVIDIA key (optional evidence review)
 
 Store it privately in backend `.env`:
 
 ```dotenv
 NVIDIA_API_KEY=YOUR_PRIVATE_API_CATALOG_KEY
+VISION_PROVIDER=nvidia
+VISION_SEND_TO_THIRD_PARTY=false
 ```
 
-Get an API Catalog key at https://build.nvidia.com/ from an image-capable model's **Get API Key** option. No `VITE_` or `NEXT_PUBLIC_` prefix for this secret. Hosted vision integration is not enabled merely by setting the key. Local YOLO is already functional without it. A vision LLM does not replace reliable timestamps, tracking, explicit event rules or sourced carbon calculations. See `docs/VISION_API.md`.
+Get an API Catalog key at https://build.nvidia.com/ from an image-capable model's **Get API Key** option. No `VITE_` or `NEXT_PUBLIC_` prefix for this secret. Restart the API and worker, then use **Settings → Check model connection** to check access without sending images. To enable hosted review, set `VISION_SEND_TO_THIRD_PARTY=true` on the backend and restart; the operator must separately consent on each run or incident. Do not enable this for footage without sharing permission. Local YOLO works without the key. A vision LLM does not replace timestamps, tracking, event rules or sourced carbon calculations. See `docs/VISION_API.md`.
+
+`GET /api/health` checks only that the API process responds; `GET /api/ready` checks that the configured application database and its tables are reachable (HTTP 503 if not). The Settings page separately shows database and worker state. A Supabase project URL and publishable key are **not** `DATABASE_URL`; use the private PostgreSQL connection string described above. Never place it in the browser.
 
 ## Portable archive
 

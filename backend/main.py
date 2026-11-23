@@ -12,15 +12,15 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, text
 
-from .config import DATA, MAX_DURATION, MAX_UPLOAD, RECIPIENTS, TOKEN
-from .db import Carbon, Equipment, Incident, Notification, Run, Session, Source, VisionReview, init_db, serialize
-from .schemas import Action, CarbonRequest, EquipmentRequest, EquipmentStateRequest, ProposalRequest, RunRequest, VisionReviewRequest
-from . import vision
+from .config import DATA, MAX_DURATION, MAX_UPLOAD, RECIPIENTS, STORAGE_LIMIT, TOKEN
+from .db import Carbon, EmissionFactor, Equipment, Incident, Notification, OperatorKey, Run, RunSummary, Session, Source, VisionReview, engine, init_db, serialize
+from .schemas import Action, CameraRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, ProposalRequest, RunRequest, VisionReviewRequest
+from . import camera, vision
 
 log = logging.getLogger('zenith')
 logging.basicConfig(level=logging.INFO)
@@ -29,7 +29,10 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app):
     init_db()
-    yield
+    try:
+        yield
+    finally:
+        camera.stop()
 
 
 app = FastAPI(title='Zenith monitoring', version='0.1.0', lifespan=lifespan)
@@ -53,10 +56,26 @@ def owner(request: Request, credentials: HTTPAuthorizationCredentials | None = D
             valid = int(expiry) > time.time() and hmac.compare_digest(signature, expected)
         except (ValueError, TypeError):
             valid = False
+        if valid:
+            with Session() as session:
+                valid = session.scalar(select(func.count()).select_from(OperatorKey)) == 0
     if not valid:
+        if credentials is not None and len(credentials.credentials) >= 24:
+            digest = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+            with Session() as session:
+                key = session.scalar(select(OperatorKey).where(
+                    OperatorKey.token_hash == digest, OperatorKey.enabled.is_(True)))
+                if key is not None:
+                    return key.owner
         log.warning('Rejected invalid operator credential')
         raise HTTPException(401, 'Connect the local session or enter a valid operator key in Settings')
     return hashlib.sha256(TOKEN.encode()).hexdigest()
+
+
+def administrator(identity=Depends(owner), credentials: HTTPAuthorizationCredentials | None = Depends(security)):
+    if credentials is None or not secrets.compare_digest(identity, hashlib.sha256(TOKEN.encode()).hexdigest()):
+        raise HTTPException(403, 'Enter the administrator key in Settings before managing operator keys')
+    return identity
 
 
 @app.post('/api/local-session')
@@ -67,6 +86,9 @@ def local_session(request: Request, response: Response):
     approved = {str(request.base_url).rstrip('/'), *os.getenv('ZENITH_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173').split(',')}
     if not local_browser(request) or origin not in approved or urlsplit(origin).hostname not in {'localhost', '127.0.0.1', '::1'}:
         raise HTTPException(403, 'Automatic access is available only from the local laptop application; remote access requires the operator key')
+    with Session() as session:
+        if session.scalar(select(func.count()).select_from(OperatorKey)):
+            raise HTTPException(403, 'Automatic local sessions are disabled when separate operator keys exist. Enter your operator key in Settings.')
     expiry, nonce = str(int(time.time()) + 8*3600), secrets.token_hex(16)
     signature = hmac.new(TOKEN.encode(), f'{expiry}.{nonce}'.encode(), hashlib.sha256).hexdigest()
     response.set_cookie('zenith_local', f'{expiry}.{nonce}.{signature}', max_age=8*3600,
@@ -102,21 +124,105 @@ def health():
     return {'status': 'ok', 'service': 'zenith'}
 
 
+def database_readiness():
+    # Probe the actual configured connection and an application table, not just the API process.
+    # Never return connection strings or driver error text to clients.
+    try:
+        with engine.connect() as connection:
+            connection.execute(select(Source.id).limit(0))
+        return {'ready': True, 'engine': engine.dialect.name, 'detail': 'Application database is reachable'}
+    except Exception:
+        log.warning('Database readiness check failed')
+        return {'ready': False, 'engine': engine.dialect.name, 'detail': 'Application database is unavailable'}
+
+
+@app.get('/api/ready')
+def ready():
+    database = database_readiness()
+    body = {'status': 'ready' if database['ready'] else 'not_ready', 'service': 'zenith',
+            'database': database}
+    return JSONResponse(body, status_code=200 if database['ready'] else 503)
+
+
 @app.get('/api/status')
 def status(identity=Depends(owner)):
     heartbeat = DATA / 'worker.heartbeat'
     age = time.time() - heartbeat.stat().st_mtime if heartbeat.exists() else None
     vision_status = vision.provider_status()
-    return {'worker_online': age is not None and age < 45, 'worker_age_seconds': age,
+    with Session() as session:
+        used = sum(row.payload.get('bytes', 0) for row in session.scalars(select(Source).where(Source.owner == identity)))
+    return {'database': database_readiness(), 'camera': camera.status(identity), 'is_admin': identity == hashlib.sha256(TOKEN.encode()).hexdigest(),
+            'storage_used_mb': round(used / 1024**2, 1), 'storage_limit_mb': STORAGE_LIMIT // 1024**2,
+            'worker_online': age is not None and age < 45, 'worker_age_seconds': age,
             'email_mode': 'configured' if os.getenv('RESEND_API_KEY') and os.getenv('ZENITH_FROM_EMAIL') else 'preview',
             'ai_review': vision_status['provider'], 'vision': vision_status, 'recipients': RECIPIENTS, 'max_upload_mb': MAX_UPLOAD // (1024*1024),
-            'max_video_seconds': MAX_DURATION, 'deployment': 'single-operator demo',
+            'max_video_seconds': MAX_DURATION, 'deployment': 'laptop operator-key workspaces',
             'capabilities': ['zone', 'traffic', 'machine_activity']}
+
+
+@app.get('/api/operators')
+def operators(identity=Depends(administrator)):
+    with Session() as session:
+        return [{'id': row.id, 'label': row.payload['label'], 'enabled': row.enabled, 'created': row.created}
+                for row in session.scalars(select(OperatorKey).order_by(OperatorKey.created.desc()))]
+
+
+@app.post('/api/operators', status_code=201)
+def add_operator(body: OperatorKeyRequest, identity=Depends(administrator)):
+    with Session() as session:
+        if session.scalar(select(func.count()).select_from(OperatorKey)) >= 10:
+            raise HTTPException(429, 'This laptop is limited to 10 operator keys')
+        token = secrets.token_urlsafe(32)
+        row = OperatorKey(owner=str(uuid.uuid4()), token_hash=hashlib.sha256(token.encode()).hexdigest(),
+                          payload={'label': body.label.strip()})
+        session.add(row)
+        session.commit()
+        return {'id': row.id, 'label': row.payload['label'], 'key': token}
+
+
+@app.post('/api/operators/{key_id}/revoke')
+def revoke_operator(key_id: str, identity=Depends(administrator)):
+    with Session() as session:
+        row = session.get(OperatorKey, key_id)
+        if row is None:
+            raise HTTPException(404, 'Operator key not found')
+        row.enabled = False
+        session.commit()
+    return {'status': 'revoked'}
 
 
 @app.get('/api/vision/status')
 def vision_status(identity=Depends(owner)):
     return vision.probe()
+
+
+@app.post('/api/cameras/rtsp/start', status_code=202)
+def start_rtsp(body: CameraRequest, identity=Depends(owner)):
+    if body.rule.recipient and body.rule.recipient not in RECIPIENTS:
+        raise HTTPException(400, 'Recipient is not configured')
+    heartbeat = DATA / 'worker.heartbeat'
+    if not heartbeat.exists() or time.time() - heartbeat.stat().st_mtime > 45:
+        raise HTTPException(409, 'Start the analysis worker before starting a camera')
+    try:
+        return camera.start(identity, body.rule.model_dump())
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post('/api/cameras/rtsp/stop')
+def stop_rtsp(identity=Depends(owner)):
+    try:
+        return camera.stop(identity)
+    except ValueError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+
+@app.get('/api/cameras/rtsp/preview')
+def preview_rtsp(identity=Depends(owner)):
+    try:
+        return Response(camera.snapshot(identity), media_type='image/jpeg')
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.get('/api/sources')
@@ -173,11 +279,17 @@ async def upload(file: UploadFile, identity=Depends(owner)):
         with Session() as session:
             if session.scalar(select(func.count()).select_from(Source).where(Source.owner == identity)) >= 30:
                 raise HTTPException(429, 'This demo is limited to 30 source clips; archive data before adding more')
+            remaining = STORAGE_LIMIT - sum(row.payload.get('bytes', 0) for row in session.scalars(
+                select(Source).where(Source.owner == identity)))
+            if remaining <= 0:
+                raise HTTPException(429, 'Source storage quota reached; archive old clips before uploading')
         with path.open('wb') as stream:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
                 if size > MAX_UPLOAD:
                     raise HTTPException(413, 'Clip exceeds upload limit')
+                if size > remaining:
+                    raise HTTPException(413, 'Clip exceeds your remaining source storage quota')
                 stream.write(chunk)
         capture = cv2.VideoCapture(str(path))
         try:
@@ -270,6 +382,9 @@ def create_run(body: RunRequest, identity=Depends(owner)):
         if approval:
             run.payload = {**run.payload, 'vision_authorization': approval}
         session.add(run)
+        session.flush()
+        if approval:
+            session.add(RunSummary(id=run.id, owner=identity, payload=approval))
         session.commit()
         log.info('Queued analysis %s', run.id)
         return serialize(run)
@@ -278,13 +393,34 @@ def create_run(body: RunRequest, identity=Depends(owner)):
 @app.get('/api/runs')
 def runs(identity=Depends(owner)):
     with Session() as session:
-        return [serialize(x) for x in session.scalars(select(Run).where(Run.owner == identity).order_by(Run.created.desc()).limit(100))]
+        rows = list(session.scalars(select(Run).where(Run.owner == identity).order_by(Run.created.desc()).limit(100)))
+        summaries = {x.id: x for x in session.scalars(select(RunSummary).where(
+            RunSummary.owner == identity, RunSummary.id.in_([row.id for row in rows])))} if rows else {}
+        return [{**serialize(row), 'vision_summary': vision.review_view(summaries.get(row.id))} for row in rows]
 
 
 @app.get('/api/runs/{run_id}')
 def get_run(run_id: str, identity=Depends(owner)):
     with Session() as session:
-        return serialize(owned(session, Run, run_id, identity))
+        row = owned(session, Run, run_id, identity)
+        return {**serialize(row), 'vision_summary': vision.review_view(session.get(RunSummary, row.id))}
+
+
+@app.post('/api/runs/{run_id}/crossings/{track_id}/review')
+def review_crossing(run_id: str, track_id: int, body: CrossingReviewRequest, identity=Depends(owner)):
+    with Session() as session:
+        if session.bind.dialect.name == 'sqlite':
+            session.execute(text('BEGIN IMMEDIATE'))
+        else:
+            session.execute(select(Run).where(Run.id == run_id, Run.owner == identity).with_for_update())
+        row = owned(session, Run, run_id, identity)
+        if row.status != 'completed' or not any(x['track_id'] == track_id for x in row.payload.get('crossings', [])):
+            raise HTTPException(404, 'Recorded crossing not found')
+        reviews = dict(row.payload.get('crossing_reviews', {}))
+        reviews[str(track_id)] = {'action': body.action, 'note': body.note, 'reviewed_at': time.time()}
+        row.payload = {**row.payload, 'crossing_reviews': reviews}
+        session.commit()
+        return {'track_id': track_id, **reviews[str(track_id)]}
 
 
 @app.get('/api/events')
@@ -369,6 +505,13 @@ def notifications(identity=Depends(owner)):
 
 def carbon_values(body, session, identity):
     values = body.model_dump()
+    if body.factor_id:
+        factor = owned(session, EmissionFactor, body.factor_id, identity)
+        details = factor.payload
+        if details['kind'] != body.kind or (body.kind == 'traffic' and details['vehicle_class'] != body.vehicle_class):
+            raise HTTPException(400, 'Saved factor does not match this activity and vehicle class')
+        values['factor'] = details['factor']
+        values['factor_source'] = f"{details['source']} · {details['region']} · {details['year']} · saved factor {factor.id}"
     if body.run_id:
         run = owned(session, Run, body.run_id, identity)
         if run.status != 'completed':
@@ -376,7 +519,14 @@ def carbon_values(body, session, identity):
         if body.kind == 'traffic':
             if run.payload['rule']['capability'] != 'traffic' or not body.vehicle_class:
                 raise HTTPException(400, 'Select a traffic run and vehicle class')
-            values['quantity'] = run.payload.get('counts', {}).get(body.vehicle_class, 0)
+            raw_count = run.payload.get('counts', {}).get(body.vehicle_class, 0)
+            dismissed = sum(1 for crossing in run.payload.get('crossings', [])
+                if crossing['vehicle_class'] == body.vehicle_class and
+                run.payload.get('crossing_reviews', {}).get(str(crossing['track_id']), {}).get('action') == 'false_positive')
+            values['quantity'] = max(0, raw_count - dismissed)
+            if dismissed:
+                values['basis'] = (f'{dismissed} operator-reviewed false positive crossing(s) excluded '
+                                   f'from {raw_count} raw {body.vehicle_class} crossings. ' + body.basis)
         elif body.kind == 'electricity':
             if run.payload['rule']['capability'] != 'machine_activity':
                 raise HTTPException(400, 'Select an equipment activity run')
@@ -393,19 +543,19 @@ def carbon_values(body, session, identity):
     else:
         values['coverage'] = 'operator-supplied activity; not independently verified'
     if body.metered_kwh is not None:
-        kg = body.metered_kwh * body.factor
-        formula = f'{body.metered_kwh:g} kWh × {body.factor:g} kg CO2e/kWh'
+        kg = body.metered_kwh * values['factor']
+        formula = f"{body.metered_kwh:g} kWh × {values['factor']:g} kg CO2e/kWh"
         if not body.run_id:
             values['basis'] = 'Operator-supplied metered energy. ' + body.basis
     elif body.kind == 'electricity':
-        kg = values['quantity'] * values['hours'] * body.load_fraction * body.factor
-        formula = f"{values['quantity']:g} kW × {values['hours']:.6g} h × {body.load_fraction:g} load × {body.factor:g} kg CO2e/kWh"
+        kg = values['quantity'] * values['hours'] * body.load_fraction * values['factor']
+        formula = f"{values['quantity']:g} kW × {values['hours']:.6g} h × {body.load_fraction:g} load × {values['factor']:g} kg CO2e/kWh"
     elif body.kind == 'fuel':
-        kg = values['quantity'] * body.factor
-        formula = f"{values['quantity']:g} L × {body.factor:g} kg CO2e/L"
+        kg = values['quantity'] * values['factor']
+        formula = f"{values['quantity']:g} L × {values['factor']:g} kg CO2e/L"
     else:
-        kg = values['quantity'] * body.distance_km * body.factor / 1000
-        formula = f"{values['quantity']:g} vehicles × {body.distance_km:g} km × {body.factor:g} g CO2/vehicle-km ÷ 1000"
+        kg = values['quantity'] * body.distance_km * values['factor'] / 1000
+        formula = f"{values['quantity']:g} vehicles × {body.distance_km:g} km × {values['factor']:g} g CO2/vehicle-km ÷ 1000"
     return {**values, 'kg': kg, 'formula': formula, 'label': 'CO2 estimate' if body.kind == 'traffic' else 'CO2e estimate'}
 
 
@@ -428,6 +578,24 @@ def add_carbon(body: CarbonRequest, identity=Depends(owner)):
 def carbon(identity=Depends(owner)):
     with Session() as session:
         return [serialize(x) for x in session.scalars(select(Carbon).where(Carbon.owner == identity).order_by(Carbon.created.desc()).limit(1000))]
+
+
+@app.get('/api/carbon/factors')
+def emission_factors(identity=Depends(owner)):
+    with Session() as session:
+        return [serialize(x) for x in session.scalars(select(EmissionFactor).where(
+            EmissionFactor.owner == identity).order_by(EmissionFactor.created.desc()).limit(50))]
+
+
+@app.post('/api/carbon/factors', status_code=201)
+def add_emission_factor(body: EmissionFactorRequest, identity=Depends(owner)):
+    with Session() as session:
+        if session.scalar(select(func.count()).select_from(EmissionFactor).where(EmissionFactor.owner == identity)) >= 50:
+            raise HTTPException(429, 'Maximum 50 saved factors per operator')
+        row = EmissionFactor(owner=identity, payload=body.model_dump())
+        session.add(row)
+        session.commit()
+        return serialize(row)
 
 
 def equipment_view(row):

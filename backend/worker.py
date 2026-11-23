@@ -14,7 +14,7 @@ from sqlalchemy import or_, select, update
 
 from .config import DATA, RECIPIENTS, VISION_AUTO_LIMIT
 from .db import Incident, Notification, Run, Session, Source, VisionReview, init_db
-from .vision import process_one_review
+from .vision import process_one_review, process_one_summary
 
 log = logging.getLogger('zenith.worker')
 logging.basicConfig(level=logging.INFO)
@@ -105,6 +105,24 @@ def crossed(a, b, c, d):
     def orientation(p, q, r):
         return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
     return orientation(c, d, a)*orientation(c, d, b) < 0 and orientation(a, b, c)*orientation(a, b, d) <= 0
+
+
+def run_findings(rule, counts, activity_seconds, event_count, coverage):
+    """Always-available, source-bound summary; no invented model observations."""
+    capability = rule['capability']
+    if capability == 'traffic':
+        breakdown = ', '.join(f'{name}: {count}' for name, count in counts.items() if count)
+        total = sum(counts.values())
+        result = f'{total} tracked vehicle crossing(s) at the configured line.'
+        if breakdown:
+            result += f' Classes: {breakdown}.'
+    elif capability == 'zone':
+        result = f'{event_count} suspected zone-dwell observation(s) at the configured region.'
+    else:
+        result = (f'{activity_seconds:.2f} seconds of detected visible motion in the configured region; '
+                  f'{event_count} motion observation(s). This is not an electrical ON/OFF measurement.')
+    return {'summary': result, 'limitations': f'{coverage}. Review source footage and geometry; detections are not verified.',
+            'basis': 'rule results, not an AI reading of the full video', 'incident_count': event_count}
 
 
 def analyze(run_id, token):
@@ -267,9 +285,10 @@ def analyze(run_id, token):
         if last_t < source.payload['duration'] - max(1, 2*step/fps):
             raise ValueError('Video decode ended before expected duration; coverage incomplete')
         # Do not manufacture an after frame if the source ended before it existed.
+        coverage = 'partial: source frame gaps' if frame_gaps else 'sampled file coverage; detector accuracy unvalidated'
         update_run(run_id, token, status='completed', progress=100, stage='Analysis complete', counts=counts, directions=directions,
-                   activity_seconds=round(activity_seconds,3), source_seconds=last_t,
-                   coverage='partial: source frame gaps' if frame_gaps else 'sampled file coverage; detector accuracy unvalidated',
+                    activity_seconds=round(activity_seconds,3), source_seconds=last_t,
+                    coverage=coverage, findings=run_findings(rule, counts, activity_seconds, event_count, coverage),
                    timestamp_basis='frame index / metadata FPS fallback (re-encode variable-rate sources)' if timestamp_fallback else 'decoded source timestamps',
                    analysis_fps=round(fps/step,2), completed_at=time.time(),
                    **({'crossings': crossings} if rule['capability'] == 'traffic' else {}))
@@ -357,6 +376,7 @@ def main():
         else:
             try:
                 process_one_review()
+                process_one_summary()
             except Exception:
                 log.exception('Vision review queue processing failed')
         time.sleep(1)

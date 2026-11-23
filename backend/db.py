@@ -4,7 +4,7 @@ import os
 import re
 from typing import Any
 
-from sqlalchemy import JSON, Float, MetaData, String, create_engine, event
+from sqlalchemy import JSON, Float, MetaData, String, Boolean, create_engine, event
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -95,3 +95,21 @@ class VisionReview(Record):
     status: Mapped[str] = mapped_column(String(24), default='queued', index=True)
     lease: Mapped[float] = mapped_column(Float, default=0)
     lease_token: Mapped[str] = mapped_column(String(64), default='')
+
+
+class RunSummary(Record):
+    __tablename__ = 'run_summaries'
+    # One optional vision interpretation per analysis run.
+    status: Mapped[str] = mapped_column(String(24), default='queued', index=True)
+    lease: Mapped[float] = mapped_column(Float, default=0)
+    lease_token: Mapped[str] = mapped_column(String(64), default='')
+
+
+class OperatorKey(Record):
+    __tablename__ = 'operator_keys'
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class EmissionFactor(Record):
+    __tablename__ = 'emission_factors'
