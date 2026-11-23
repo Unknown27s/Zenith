@@ -3,6 +3,7 @@ import { Camera, MonitorPlay } from 'lucide-react';
 import RunVideo, { carbonLink } from './RunVideo';
 import { download, json, request } from './api';
 import type { Data, Source } from './types';
+import { runLink, runStatus } from './workflow';
 
 /* ------------------------------------------------------------------ */
 /* Types and small helpers                                             */
@@ -348,13 +349,20 @@ function RunFindings({
 
   return (
     <div className="video-finding-run">
-      <h3>{run.rule.name} · {run.status}</h3>
+      <div className="workspace-run-heading">
+        <h3><a href={runLink(run)}>{run.rule.name}</a></h3><span className="badge">{runStatus(run)}</span>
+      </div>
+      {run.analysis_settings&&<p className="small-note">
+        {[run.analysis_settings.engine,run.analysis_settings.checkpoint,run.analysis_settings.classifier].filter(Boolean).join(' · ')}
+        {run.analysis_settings.action_confidence!=null&&' · Action threshold '+Math.round(run.analysis_settings.action_confidence*100)+'%'}
+      </p>}
 
       {run.status !== 'completed' ? (
-        <p>
-          {run.error || run.stage || 'Waiting for analysis worker'}
-          {run.status === 'processing' ? ` · ${run.progress}%` : ''}
-        </p>
+        <div className="workspace-run-progress" role={run.status==='failed'?'alert':'status'}>
+          <p>{run.error || run.stage || 'Waiting for analysis worker'}</p>
+          {run.status==='processing'&&<progress aria-label="Analysis progress" value={run.progress} max={100}/>}
+          {run.status==='failed'&&<a className="text-link" href={'#studio/'+encodeURIComponent(source.id)}>Review the setup for this clip</a>}
+        </div>
       ) : (
         <>
           <p>
@@ -383,7 +391,7 @@ function RunFindings({
           <RunVideo run={run} events={events} />
           <ReportButtons runId={run.id} notify={notify} />
 
-          {run.rule.capability !== 'zone' && (
+          {(run.rule.capability==='traffic'||run.rule.capability==='machine_activity') && (
             <a className="text-link" href={carbonLink(run)}>Calculate carbon with documented inputs →</a>
           )}
         </>
@@ -411,14 +419,6 @@ function SourceCard({
   notify: Notify;
   onReview: (target: ReviewTarget) => void;
 }) {
-  function analyze() {
-    try {
-      sessionStorage.setItem('zenith.source', source.id);
-    } catch {
-      /* Storage can be unavailable (private mode); Studio still opens. */
-    }
-    window.location.hash = 'studio';
-  }
 
   return (
     <section className="panel">
@@ -434,9 +434,9 @@ function SourceCard({
           {!detailed && (
             <a className="button primary" href={`#videos/${encodeURIComponent(source.id)}`}>View analysis →</a>
           )}
-          <button className="button secondary" type="button" onClick={analyze}>
+          <a className="button secondary" href={'#studio/'+encodeURIComponent(source.id)}>
             <MonitorPlay size={16} aria-hidden="true" /> Analyze this clip
-          </button>
+          </a>
         </div>
       </div>
 
@@ -472,16 +472,45 @@ function SourceCard({
 
 export default function VideoFindings({
   data,
+  connected,
   refresh,
   notify,
   selectedSourceId,
+  selectedRunId,
 }: {
   data: Data;
+  connected: boolean;
   refresh: () => void;
   notify: Notify;
   selectedSourceId?: string;
+  selectedRunId?: string;
 }) {
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
+  const [focused, setFocused] = useState<{id:string; run?:Run; events?:RunEvent[]; error?:string}>();
+  const [retry, setRetry] = useState(0);
+  useEffect(()=>{
+    if(!selectedRunId||!connected){setFocused(undefined);return;}
+    const controller=new AbortController();
+    let timer:number|undefined;
+    const path='/runs/'+encodeURIComponent(selectedRunId);
+    const load=async()=>{
+      try {
+        const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(12000)]);
+        const run=await json<Run>(path,{signal});
+        const events=run.status==='completed'?await json<RunEvent[]>(path+'/events',{signal}):NO_EVENTS;
+        if(controller.signal.aborted)return;
+        setFocused({id:selectedRunId,run,events});
+        if(run.status==='queued'||run.status==='processing'||run.vision_summary?.status==='queued'||run.vision_summary?.status==='processing'){
+          timer=window.setTimeout(load,2500);
+        }
+      }catch(error){
+        if(!controller.signal.aborted)setFocused({id:selectedRunId,error:errorMessage(error)});
+      }
+    };
+    void load();
+    return ()=>{controller.abort();window.clearTimeout(timer);};
+  },[selectedRunId,connected,retry]);
+
 
   const runsBySource = useMemo(() => groupBy(data.runs, run => run.source_id), [data.runs]);
   const eventsByRun = useMemo(() => groupBy(data.events, event => event.run_id), [data.events]);
@@ -489,6 +518,9 @@ export default function VideoFindings({
   const selectedSource = data.sources.find(source => source.id === selectedSourceId);
   const visibleSources = selectedSourceId ? (selectedSource ? [selectedSource] : []) : data.sources;
   const detailed = Boolean(selectedSourceId);
+  const selection=focused?.id===selectedRunId?focused:undefined;
+  const fallbackRun=selectedSource?(runsBySource.get(selectedSource.id)??NO_RUNS).find(run=>run.id===selectedRunId):undefined;
+  const selectedRun=selection?.run&&selection.run.source_id===selectedSourceId?selection.run:fallbackRun;
 
   async function saveReview(note: string) {
     if (!reviewTarget) return;
@@ -500,6 +532,7 @@ export default function VideoFindings({
       });
       setReviewTarget(null);
       refresh();
+      setRetry(value=>value+1);
       notify('Crossing review saved. Raw detector counts remain unchanged for audit.');
     } catch (error) {
       notify(errorMessage(error)); // dialog stays open so the note is not lost
@@ -510,15 +543,14 @@ export default function VideoFindings({
     <>
       <div className="heading">
         <div>
-          <div className="eyebrow">ONE VIDEO · ITS ACTUAL FINDINGS</div>
+          <div className="eyebrow">{selectedRunId?'ANALYSIS RUN':'MONITORING'}</div>
           <h1>{selectedSource?.name || 'Video findings'}</h1>
-          <p>
-            Each clip and analysis run has its own results. A summary is saved when analysis finishes; optional AI
-            interpretation requires separate consent.
-          </p>
+          <p>{selectedRunId?'Follow this run and review the results when it completes.':'Open a clip to see its analysis runs and review the evidence.'}</p>
         </div>
         <div className="action-row">
-          {selectedSource && <a className="button secondary" href="#videos">← All videos</a>}
+          {selectedSourceId&&<a className="button secondary" href={selectedRunId?'#videos/'+encodeURIComponent(selectedSourceId):'#videos'}>
+            {selectedRunId?'All runs for this clip':'All videos'}
+          </a>}
           <a className="button primary" href="#studio">
             <Camera size={17} aria-hidden="true" /> Upload or record
           </a>
@@ -529,7 +561,20 @@ export default function VideoFindings({
         <p role="alert">This video is not in your workspace.</p>
       )}
 
-      {data.sources.length ? (
+      {selectedRunId ? (
+        connected&&selectedSource&&selectedRun?
+          <section className="panel workspace-run-detail" aria-label="Selected analysis">
+            <RunFindings key={selectedRun.id} run={selectedRun} source={selectedSource}
+              events={selection?.run?.id===selectedRun.id?selection.events??NO_EVENTS:eventsByRun.get(selectedRun.id)??NO_EVENTS}
+              notify={notify} onReview={setReviewTarget}/>
+            {selection?.error&&<p role="alert">{selection.error} <button className="text-button" onClick={()=>setRetry(n=>n+1)}>Retry</button></p>}
+          </section>
+          : <section className="panel workspace-run-detail" aria-live="polite">
+            <p>{selection?.error||(!connected?'Connect to load this analysis.':
+              selection?.run?'This run does not belong to the selected clip.':'Loading analysis…')}</p>
+            {selection?.error&&<button className="button secondary" onClick={()=>setRetry(n=>n+1)}>Retry</button>}
+          </section>
+      ) : data.sources.length ? (
         <div className="video-findings-list">
           {visibleSources.map(source => (
             <SourceCard

@@ -17,9 +17,10 @@ export default function FactorLibrary({kind,connected,onSelect,notify}: {
   useEffect(()=>{setSelected('');onSelect(null);},[kind]);
   async function add(event:FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const target=event.currentTarget;
     setBusy(true);
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(target);
       const factor = await json<SavedFactor>('/carbon/factors',{method:'POST',body:JSON.stringify({
         name:form.get('name'),kind,source:form.get('source'),region:form.get('region'),
         year:Number(form.get('year')),factor:Number(form.get('factor')),
@@ -28,7 +29,7 @@ export default function FactorLibrary({kind,connected,onSelect,notify}: {
       setItems(previous=>[factor,...previous]);
       setSelected(factor.id);
       onSelect(factor);
-      event.currentTarget.reset();
+      target.reset();
       notify('Factor saved with source, region, year and applicable class.');
     } catch(error) {notify((error as Error).message);}
     finally {setBusy(false);}

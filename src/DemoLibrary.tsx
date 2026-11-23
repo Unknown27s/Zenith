@@ -5,6 +5,16 @@ import manifest from '../public/examples/manifest.json';
 import { json } from './api';
 import type { Source } from './types';
 
+const guidance: Record<string,{label:string; check:string}> = {
+  'traffic-counting': {label:'Traffic & CO₂',check:'Watch the approaching carriageway. Check vehicles that cross both preset gates, then compare the class counts. The example uses a 50 m assumption for CO₂.'},
+  'staged-fall': {label:'Staged fall',check:'Watch the full clip, then compare any flagged moment with the original footage. Install the action checkpoint to run it.'},
+  'boxing-training': {label:'Fight-like movement',check:'This is sports training. Check whether the model flags it, then review the sporting context. Install the action checkpoint to run it.'},
+  'people-zone': {label:'Zone monitoring',check:'Adjust the suggested zone to cover the pedestrian route and check the dwell time before running.'},
+  'equipment-activity': {label:'Equipment activity',check:'Watch the conveyor and compare the visible movement with the reported motion duration.'},
+};
+const examples = ['traffic-counting','staged-fall','boxing-training','people-zone','equipment-activity']
+  .flatMap(id=>manifest.filter(item=>item.id===id));
+
 const datasets = [
   {
     title: 'Highway Traffic Videos',
@@ -50,21 +60,39 @@ export default function DemoLibrary({connected, workerOnline, notify, refresh, a
       sessionStorage.setItem('zenith.source', source.id);
       sessionStorage.setItem('zenith.capability', item.capability);
       sessionStorage.setItem('zenith.instruction', item.instruction);
-      refresh(); window.location.hash = 'studio';
+      refresh(); window.location.hash = 'studio/'+encodeURIComponent(source.id);
       notify('Example imported. Review the suggested analysis settings before running.');
     } catch (error) { notify((error as Error).message); }
     finally { setBusy(''); }
   }
   return <>
-    <div className="heading"><div><div className="eyebrow">FOOTAGE TO GET STARTED</div><h1>Choose a real source. Keep its context.</h1><p>Download from the original provider, inspect the clip, then upload it to the monitoring studio.</p></div><a className="button primary" href="#studio"><Camera size={17}/> Open studio</a></div>
-    <AutomaticDemo connected={connected} workerOnline={workerOnline} actionReady={actionReady} refresh={refresh}/>
-    <div className="info-note"><strong>Example footage for every supported capability.</strong> Preview or download the clips below, then use one in the studio. They are real source excerpts, not fabricated detector outputs. Studio suggests editable geometry; check it against the footage before confirming. Source credit and license travel with each example.</div>
-    <div className="example-video-grid">{manifest.map(item => <section className="panel example-video-card" key={item.id}>
-      <video controls playsInline preload="metadata" src={`/examples/${item.file}`} aria-label={item.title}/>
-      <div className="example-video-body"><span className="badge">{item.capability === 'zone' ? 'PEOPLE / ZONE' : item.capability === 'traffic' ? 'TRAFFIC / CARBON INPUT' : item.capability === 'action' ? 'FIGHT / FALL TEST CLIP' : 'EQUIPMENT / MOTION PROXY'}</span><h2>{item.title}</h2><p>{item.description}</p><blockquote>{item.instruction}</blockquote>
-      <p className="example-credit">{item.credit}<br/><a href={item.licenseUrl} target="_blank" rel="noopener noreferrer">{item.license}</a> · <a href={item.source} target="_blank" rel="noopener noreferrer">Original source ↗</a></p><p className="example-credit">{item.changes}</p>
-      <div className="action-row"><button className="button primary" disabled={!connected || !!busy} onClick={() => void useExample(item)}>{busy === item.id ? 'Importing…' : 'Use in studio'}</button><a className="button secondary" download href={`/examples/${item.file}`}><ArrowDownToLine size={16}/> Download video</a></div></div>
-    </section>)}</div>
+    <div className="heading"><div><div className="eyebrow">MONITORING</div><h1>Sample footage</h1>
+      <p>Preview a clip, open it in Studio, then review what the analysis finds.</p></div>
+      <a className="button secondary" href="#studio"><Camera size={17}/> Open Studio</a>
+    </div>
+    <div className="example-video-grid workspace-examples">{examples.map(item=>{
+      const guide=guidance[item.id];
+      const actionAvailable=item.capability!=='action'||actionReady;
+      return <section className="panel example-video-card" key={item.id}>
+        <video controls playsInline preload="none" poster={'/examples/'+item.id+'.webp'} src={'/examples/'+item.file} aria-label={item.title}/>
+        <div className="example-video-body">
+          <div className="workspace-example-meta"><span className="badge">{guide.label}</span><small>{item.seconds.toFixed(1)} s</small></div>
+          <h2>{item.title}</h2><p>{guide.check}</p>
+          <div className="action-row">
+            <button className="button primary" disabled={!connected||!!busy||!actionAvailable} onClick={()=>void useExample(item)}>
+              {busy===item.id?'Opening…':'Open in Studio'}
+            </button>
+            {!actionAvailable&&<a className="button secondary" href="#settings">Set up model</a>}
+            <a className="button secondary" download href={'/examples/'+item.file}><ArrowDownToLine size={16}/> Download</a>
+          </div>
+          <details className="workspace-credit"><summary>Source and license</summary>
+            <p>{item.credit}<br/><a href={item.licenseUrl} target="_blank" rel="noopener noreferrer">{item.license}</a> · <a href={item.source} target="_blank" rel="noopener noreferrer">Original source</a></p>
+            <small>{item.changes}</small>
+          </details>
+        </div>
+      </section>;
+    })}</div>
+    <div className="section-gap"><AutomaticDemo connected={connected} workerOnline={workerOnline} actionReady={actionReady} refresh={refresh}/></div>
     <div className="heading section-gap"><div><div className="eyebrow">ADDITIONAL RESEARCH SOURCES</div><h2>More footage on Kaggle</h2><p>External datasets may need login, trimming, attribution or permission. Unsupported detectors are labelled explicitly.</p></div></div>
     <div className="dataset-grid">{datasets.map(dataset => <section className="panel dataset-card" key={dataset.page}>
       <div className="dataset-top"><span className="stat-icon mint"><Film size={23}/></span><span className="badge">{dataset.tag}</span></div>

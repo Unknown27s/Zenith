@@ -4,8 +4,8 @@ import type { DetectorOptions, Point, Rule, Status } from './types';
 
 type StreamRule = Omit<Rule, 'points' | 'confirmed'> & DetectorOptions;
 
-export default function NetworkCamera({camera, rule, workerOnline, connected, notify, refresh}: {
-  camera: NonNullable<Status['camera']>; rule: StreamRule; workerOnline: boolean; connected: boolean;
+export default function NetworkCamera({camera, rule, workerOnline, actionReady, connected, notify, refresh}: {
+  camera: NonNullable<Status['camera']>; rule: StreamRule; workerOnline: boolean; actionReady: boolean; connected: boolean;
   notify: (message: string) => void; refresh: () => void;
 }) {
   const [preview, setPreview] = useState('');
@@ -18,10 +18,11 @@ export default function NetworkCamera({camera, rule, workerOnline, connected, no
     dwell_seconds: rule.dwell_seconds, motion_threshold: rule.motion_threshold, recipients: rule.recipients,
     alert_cooldown_seconds: rule.alert_cooldown_seconds,
     confidence: rule.confidence, image_size: rule.image_size, iou_threshold: rule.iou_threshold,
-    analysis_fps: rule.analysis_fps, vehicle_classes: rule.vehicle_classes});
+    analysis_fps: rule.analysis_fps, vehicle_classes: rule.vehicle_classes, action_confidence: rule.action_confidence});
   const currentApproval = JSON.stringify([signature, points, preview]);
   const confirmed = approval === currentApproval;
-  const enough = rule.capability === 'traffic' ? points.length === 2 : points.length >= 3;
+  const action = rule.capability === 'action';
+  const enough = action ? actionReady : rule.capability === 'traffic' ? points.length === 2 : points.length >= 3;
   const restartable = ['stopped', 'capture failed', 'storage or source limit reached; archive clips before restarting'].includes(camera.state);
 
   useEffect(() => () => pending.current?.abort(), []);
@@ -64,15 +65,15 @@ export default function NetworkCamera({camera, rule, workerOnline, connected, no
     </div>
     {preview && <>
       <div className="video-stage rtsp-preview"><img src={preview} alt="Current network stream frame"/>
-        <svg className="geometry" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Click to draw stream geometry" onClick={event => {
+        {!action&&<svg className="geometry" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Click to draw stream geometry" onClick={event => {
           const rect = event.currentTarget.getBoundingClientRect();
           if (points.length < (rule.capability === 'traffic' ? 2 : 12)) setPoints([...points, [(event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height]]);
         }}>
           {points.length > 1 && (rule.capability === 'traffic' ? <polyline points={points.map(([x,y]) => `${x*1000},${y*1000}`).join(' ')}/> : <polygon points={points.map(([x,y]) => `${x*1000},${y*1000}`).join(' ')}/>)}
           {points.map(([x,y], i) => <circle key={i} cx={x*1000} cy={y*1000} r="7"/>)}
-        </svg>
+        </svg>}
       </div>
-      <div className="geometry-toolbar"><span>Draw a separate stream {rule.capability === 'traffic' ? 'line (2 points)' : 'region (3–12 points)'}. {points.length} points.</span><div>
+      {!action&&<><div className="geometry-toolbar"><span>Draw a separate stream {rule.capability === 'traffic' ? 'line (2 points)' : 'region (3–12 points)'}. {points.length} points.</span><div>
         <button type="button" className="text-button" onClick={() => setPoints(points.slice(0,-1))}>Undo stream point</button>
         <button type="button" className="text-button" onClick={() => setPoints([])}>Clear stream geometry</button>
       </div></div>
@@ -82,8 +83,9 @@ export default function NetworkCamera({camera, rule, workerOnline, connected, no
           if (rows.length <= 12 && rows.every(p => p.length === 2 && p.every(n => Number.isFinite(n) && n >= 0 && n <= 1))) setPoints(rows as Point[]);
           else notify('Stream coordinates must be x,y pairs between 0 and 1.');
         }}/>
-      </details>
-      <label className="checkbox"><input type="checkbox" checked={confirmed} disabled={!enough} onChange={event => setApproval(event.target.checked ? currentApproval : '')}/>I reviewed this stream’s geometry, the selected rule settings and notification recipients.</label>
+      </details></>}
+      {action&&<p className="small-note">{actionReady?"The action model watches the full frame.":"Install the action checkpoint in Settings."}</p>}
+      <label className="checkbox"><input type="checkbox" checked={confirmed} disabled={!enough} onChange={event => setApproval(event.target.checked ? currentApproval : '')}/>I reviewed the stream preview, settings and notification recipients.</label>
     </>}
   </section>;
 }

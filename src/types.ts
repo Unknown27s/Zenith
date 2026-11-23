@@ -11,7 +11,7 @@ export interface Crossing {
   direction: string;
   box: [number, number, number, number];
 }
-export interface Run { id: string; source_id: string; source_name: string; status: string; stage: string; progress: number; rule: Rule; counts: Record<string, number>; directions?: Record<string, number>; crossings?: Crossing[]; crossing_reviews?: Record<string, {action:'valid'|'false_positive'; note:string; reviewed_at:number}>; activity_seconds?: number; findings?: {summary:string; limitations:string; basis:string; incident_count:number}; vision_summary?: VisionReview; source_seconds?: number; coverage: string; error?: string; created: number }
+export interface Run { analysis_settings?: {engine:string; checkpoint?:string|null; classifier?:string; action_confidence?:number; requested_fps?:number}; id: string; source_id: string; source_name: string; status: string; stage: string; progress: number; rule: Rule; counts: Record<string, number>; directions?: Record<string, number>; crossings?: Crossing[]; crossing_reviews?: Record<string, {action:'valid'|'false_positive'; note:string; reviewed_at:number}>; activity_seconds?: number; findings?: {summary:string; limitations:string; basis:string; incident_count:number}; vision_summary?: VisionReview; source_seconds?: number; coverage: string; error?: string; created: number }
 export type VisionProvider = 'nvidia' | 'local';
 export interface VisionStatus {
   provider: string;

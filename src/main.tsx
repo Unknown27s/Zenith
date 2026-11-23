@@ -7,6 +7,7 @@ import '@fontsource/inter/latin-600.css';
 import '@fontsource/inter/latin-700.css';
 import './styles.css';
 import './readability.css';
+import './workspace.css';
 
 class ErrorBoundary extends Component<{children: ReactNode}, {error: boolean}> {
   state = { error: false };
