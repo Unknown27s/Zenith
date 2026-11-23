@@ -136,6 +136,7 @@ def analyze(run_id, token):
         counted = set()
         counts = {name: 0 for name in ('car', 'motorcycle', 'bus', 'truck')}
         directions = {'A→B': 0, 'B→A': 0}
+        crossings = []
         history = deque(maxlen=18)
         pending_after = []
         activity_start = None
@@ -209,7 +210,14 @@ def analyze(run_id, token):
                             if prev and track_id not in counted and timestamp-prev[1] < 0.75 and crossed(prev[0], foot, points[0], points[1]):
                                 counts[label] += 1
                                 side = (points[1][0]-points[0][0])*(foot[1]-points[0][1])-(points[1][1]-points[0][1])*(foot[0]-points[0][0])
-                                directions['A→B' if side > 0 else 'B→A'] += 1
+                                direction = 'A→B' if side > 0 else 'B→A'
+                                directions[direction] += 1
+                                if len(crossings) < 1000:
+                                    crossings.append({
+                                        'source_seconds': round(timestamp, 3), 'track_id': track_id,
+                                        'vehicle_class': label, 'direction': direction,
+                                        'box': [x1 / width, y1 / height, x2 / width, y2 / height],
+                                    })
                                 counted.add(track_id)
                             previous[track_id] = (foot, timestamp)
                 in_zone = {k:v for k,v in in_zone.items() if k in active}
@@ -263,7 +271,8 @@ def analyze(run_id, token):
                    activity_seconds=round(activity_seconds,3), source_seconds=last_t,
                    coverage='partial: source frame gaps' if frame_gaps else 'sampled file coverage; detector accuracy unvalidated',
                    timestamp_basis='frame index / metadata FPS fallback (re-encode variable-rate sources)' if timestamp_fallback else 'decoded source timestamps',
-                   analysis_fps=round(fps/step,2), completed_at=time.time())
+                   analysis_fps=round(fps/step,2), completed_at=time.time(),
+                   **({'crossings': crossings} if rule['capability'] == 'traffic' else {}))
     finally:
         cap.release()
 

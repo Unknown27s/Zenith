@@ -378,16 +378,26 @@ def carbon_values(body, session, identity):
                 raise HTTPException(400, 'Select a traffic run and vehicle class')
             values['quantity'] = run.payload.get('counts', {}).get(body.vehicle_class, 0)
         elif body.kind == 'electricity':
-            if run.payload['rule']['capability'] != 'machine_activity' or not body.accept_activity_proxy:
-                raise HTTPException(400, 'Explicitly accept the visible-motion runtime proxy')
-            values['hours'] = run.payload.get('activity_seconds', 0) / 3600
-            values['basis'] = f'Unvalidated visible-motion proxy from run {run.id}. ' + body.basis
+            if run.payload['rule']['capability'] != 'machine_activity':
+                raise HTTPException(400, 'Select an equipment activity run')
+            if body.metered_kwh is None:
+                if not body.accept_activity_proxy:
+                    raise HTTPException(400, 'Explicitly accept the visible-motion runtime proxy')
+                values['hours'] = run.payload.get('activity_seconds', 0) / 3600
+                values['basis'] = f'Unvalidated visible-motion proxy from run {run.id}. ' + body.basis
+            else:
+                values['basis'] = 'Operator-supplied metered energy. ' + body.basis
         else:
             raise HTTPException(400, 'Fuel entries require measured or operator-provided litres')
         values['coverage'] = run.payload.get('coverage', 'unknown')
     else:
         values['coverage'] = 'operator-supplied activity; not independently verified'
-    if body.kind == 'electricity':
+    if body.metered_kwh is not None:
+        kg = body.metered_kwh * body.factor
+        formula = f'{body.metered_kwh:g} kWh × {body.factor:g} kg CO2e/kWh'
+        if not body.run_id:
+            values['basis'] = 'Operator-supplied metered energy. ' + body.basis
+    elif body.kind == 'electricity':
         kg = values['quantity'] * values['hours'] * body.load_fraction * body.factor
         formula = f"{values['quantity']:g} kW × {values['hours']:.6g} h × {body.load_fraction:g} load × {body.factor:g} kg CO2e/kWh"
     elif body.kind == 'fuel':
@@ -397,6 +407,12 @@ def carbon_values(body, session, identity):
         kg = values['quantity'] * body.distance_km * body.factor / 1000
         formula = f"{values['quantity']:g} vehicles × {body.distance_km:g} km × {body.factor:g} g CO2/vehicle-km ÷ 1000"
     return {**values, 'kg': kg, 'formula': formula, 'label': 'CO2 estimate' if body.kind == 'traffic' else 'CO2e estimate'}
+
+
+@app.post('/api/carbon/preview')
+def preview_carbon(body: CarbonRequest, identity=Depends(owner)):
+    with Session() as session:
+        return carbon_values(body, session, identity)
 
 
 @app.post('/api/carbon', status_code=201)

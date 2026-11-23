@@ -89,6 +89,13 @@ class CarbonRequest(StrictModel):
     run_id: str | None = Field(default=None, max_length=64)
     vehicle_class: Literal['car', 'motorcycle', 'bus', 'truck'] | None = None
     accept_activity_proxy: bool = False
+    metered_kwh: float | None = Field(default=None, ge=0, le=1e12)
+
+    @model_validator(mode='after')
+    def validate_meter(self):
+        if self.metered_kwh is not None and (self.kind != 'electricity' or self.accept_activity_proxy):
+            raise ValueError('Metered kWh requires electricity and cannot be combined with the motion proxy')
+        return self
 
     @field_validator('name', 'factor_source', 'basis')
     @classmethod

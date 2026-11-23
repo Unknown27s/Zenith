@@ -15,3 +15,11 @@ Metadata was checked through Kaggle's public dataset API. An uploader's license 
 For zone and equipment demos, prefer an original consenting fixed-camera recording. Include a walk-past/normal-operation comparison so you can manually understand false alerts. Select 10–30 seconds and remain within 100 MB / 180-second default limits. Video archives, frame folders, MATLAB arrays and dataset annotations are not directly accepted by the upload endpoint.
 
 No emission factors can be recovered reliably from these datasets. Traffic factors, segment length, fuel/power/load/runtime and data provenance must still be configured independently.
+
+## One-click walkthrough
+
+Connect the dashboard to a backend with a live worker and select **Demo footage → Run automatic demo**. The dashboard imports the three bundled clips in order and submits real jobs with preset geometry. The results show the safety observations, vehicle crossings, equipment motion and carbon previews. You can open each source video or jump to a timestamp from the result.
+
+Traffic, visible equipment motion, metered kWh and litres appear as separate calculation examples. Demo factors and operator inputs are illustrative and the previews do not enter the carbon ledger. The demo does not opt in to hosted vision or send email. Imported footage and completed runs appear in the same workspace as manual runs.
+
+Use **Calculate carbon** on a completed traffic or equipment run to work with its counts or runtime and visible source evidence. For measured electricity, select **Metered energy (kWh)** and describe the interval in the activity basis. A linked equipment run can provide visual context for that interval. Record your own meter reading and factor for a site estimate.

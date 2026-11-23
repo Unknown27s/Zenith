@@ -310,3 +310,17 @@ nav a.active { color: #214c2c; background: #e2edce; font-weight: 600; }
   .notification-list .badge { font-size: 12px; }
   .toast { font-size: 14px; }
 }
+
+.automatic-demo { margin-bottom: 20px; }
+.demo-result { margin-top: 20px; padding-top: 16px; border-top: 1px solid #dce6e2; }
+.demo-result h3 { margin: 0 0 8px; }
+.demo-estimate { padding: 10px 0; }
+.demo-estimate summary { cursor: pointer; }
+.run-video { margin: 12px 0; }
+.run-video-player { position: relative; width: 100%; max-width: 760px; }
+.run-video-player video { display: block; width: 100%; }
+.run-video-player svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.run-video-player :is(line, polygon, rect) { stroke: #b5ff75; stroke-width: 2px; fill: none; vector-effect: non-scaling-stroke; }
+.run-video-player rect { stroke: #ffdc61; }
+.run-video-markers { display: flex; flex-wrap: wrap; gap: 8px; max-height: 170px; overflow: auto; }
+.run-info .text-link { display: inline-block; margin-top: 4px; }

@@ -1,3 +1,4 @@
+import AutomaticDemo from './AutomaticDemo';
 import { ArrowDownToLine, ArrowUpRight, Camera, Clock3, Film, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import manifest from '../public/examples/manifest.json';
@@ -40,7 +41,7 @@ const datasets = [
   },
 ];
 
-export default function DemoLibrary({connected, notify, refresh}: {connected: boolean; notify: (message: string) => void; refresh: () => void}) {
+export default function DemoLibrary({connected, workerOnline, notify, refresh}: {connected: boolean; workerOnline: boolean; notify: (message: string) => void; refresh: () => void}) {
   const [busy, setBusy] = useState('');
   async function useExample(item: typeof manifest[number]) {
     setBusy(item.id);
@@ -56,6 +57,7 @@ export default function DemoLibrary({connected, notify, refresh}: {connected: bo
   }
   return <>
     <div className="heading"><div><div className="eyebrow">FOOTAGE TO GET STARTED</div><h1>Choose a real source. Keep its context.</h1><p>Download from the original provider, inspect the clip, then upload it to the monitoring studio.</p></div><a className="button primary" href="#studio"><Camera size={17}/> Open studio</a></div>
+    <AutomaticDemo connected={connected} workerOnline={workerOnline} refresh={refresh}/>
     <div className="info-note"><strong>One example for each supported capability.</strong> Preview or download the clips below, then use one in the studio. They are real source excerpts, not fabricated detector outputs. Draw your own demonstration region or line. Source credit and license travel with each example.</div>
     <div className="example-video-grid">{manifest.map(item => <section className="panel example-video-card" key={item.id}>
       <video controls playsInline preload="metadata" src={`/examples/${item.file}`} aria-label={item.title}/>

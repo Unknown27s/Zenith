@@ -13,7 +13,7 @@ Run `npm ci` and `python scripts/package_colab.py` from the repo. The script bui
 3. Run step 1 and upload `zenith-colab.zip`. Run step 2 to start the API and worker. When tunneling is permitted, set `ENABLE_PUBLIC_TUNNEL = True` in step 2 before running the cell.
 4. Open **Open the Zenith dashboard** from the notebook output, continue through the ngrok browser prompt if shown, and enter the operator key in **Connection & settings**. Leave **API origin** blank on this dashboard.
 5. To use a separate Vercel or laptop frontend, set `FRONTEND_ORIGIN` to its exact origin before launching the backend. In that frontend's Settings, enter the printed HTTPS tunnel origin without `/api`, plus the operator key. Deploy the updated frontend code to get the new vision controls on Vercel.
-6. Use the demo library or upload an approved clip. Draw a zone or line, confirm the rule and run analysis. When finished, run the cleanup cell. Export any reports you need first.
+6. Open **Demo footage → Run automatic demo** to analyze the three bundled clips and see carbon previews. For your own clips, choose a zone or line and confirm the rule before running analysis. When finished, run the cleanup cell. Export any reports you need first.
 
 Read the [Colab FAQ](https://research.google.com/colaboratory/faq.html) before enabling a tunnel. Free managed runtimes restrict primarily using a separate web UI. Use the notebook-native cells for interactive processing when the tunnel is unsuitable, or run the laptop deployment for dashboard access. Colab resets can remove the database, evidence, and model downloads. A restart can change the tunnel URL. Use a fresh connection when needed.
 
