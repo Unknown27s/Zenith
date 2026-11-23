@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { json, request } from './api';
-import type { DetectorOptions, Point, Rule, Status } from './types';
+import type { DetectorOptions, Point, Rule, Status, VisionStatus } from './types';
 
-type StreamRule = Omit<Rule, 'points' | 'confirmed'> & DetectorOptions;
+export type StreamRule = Omit<Rule, 'points' | 'confirmed'> & DetectorOptions;
 
-export default function NetworkCamera({camera, rule, workerOnline, actionReady, connected, notify, refresh}: {
+export default function NetworkCamera({camera, rule, vision, workerOnline, actionReady, connected, notify, refresh, endpoint='/cameras/rtsp', initialPoints=[]}: {
   camera: NonNullable<Status['camera']>; rule: StreamRule; workerOnline: boolean; actionReady: boolean; connected: boolean;
+  vision?: VisionStatus;
+  endpoint?: string;
+  initialPoints?: Point[];
   notify: (message: string) => void; refresh: () => void;
 }) {
   const [preview, setPreview] = useState('');
-  const [points, setPoints] = useState<Point[]>([]);
+  const [points, setPoints] = useState<Point[]>(initialPoints);
   const [approval, setApproval] = useState('');
   const [busy, setBusy] = useState(false);
+  const [review, setReview] = useState(false);
   const pending = useRef<AbortController | null>(null);
   // Uploaded-video geometry/confirmation must never authorize a network stream.
   const signature = JSON.stringify({capability: rule.capability, name: rule.name, instruction: rule.instruction,
@@ -19,7 +23,7 @@ export default function NetworkCamera({camera, rule, workerOnline, actionReady, 
     alert_cooldown_seconds: rule.alert_cooldown_seconds,
     confidence: rule.confidence, image_size: rule.image_size, iou_threshold: rule.iou_threshold,
     analysis_fps: rule.analysis_fps, vehicle_classes: rule.vehicle_classes, action_confidence: rule.action_confidence});
-  const currentApproval = JSON.stringify([signature, points, preview]);
+  const currentApproval = JSON.stringify([signature, points, preview, review, vision?.provider, vision?.model]);
   const confirmed = approval === currentApproval;
   const action = rule.capability === 'action';
   const enough = action ? actionReady : rule.capability === 'traffic' ? points.length === 2 : points.length >= 3;
@@ -27,15 +31,21 @@ export default function NetworkCamera({camera, rule, workerOnline, actionReady, 
 
   useEffect(() => () => pending.current?.abort(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
-  useEffect(() => { setPoints([]); setApproval(''); }, [rule.capability]);
+  const previousCapability = useRef(rule.capability);
+  useEffect(() => {
+    if (previousCapability.current !== rule.capability) setPoints([]);
+    previousCapability.current = rule.capability;
+    setApproval('');
+  }, [rule.capability]);
   useEffect(() => { setApproval(''); }, [signature, points, preview]);
+  useEffect(() => { setReview(false); setApproval(''); }, [vision?.provider, vision?.model, vision?.available, connected]);
 
   async function loadPreview() {
     const controller = new AbortController();
     pending.current?.abort(); pending.current = controller;
     setBusy(true); setApproval('');
     try {
-      const blob = await (await request('/cameras/rtsp/preview', {signal: controller.signal})).blob();
+      const blob = await (await request(`${endpoint}/preview`, {signal: controller.signal})).blob();
       if (!controller.signal.aborted) setPreview(URL.createObjectURL(blob));
     } catch (error) { if (!controller.signal.aborted) notify((error as Error).message); }
     finally { if (!controller.signal.aborted) setBusy(false); }
@@ -45,8 +55,9 @@ export default function NetworkCamera({camera, rule, workerOnline, actionReady, 
     const controller = new AbortController(); pending.current = controller;
     setBusy(true);
     try {
-      await json(`/cameras/rtsp/${action}`, {method: 'POST', signal: controller.signal,
-        ...(action === 'start' ? {body: JSON.stringify({rule: {...JSON.parse(signature), points, confirmed}})} : {})});
+      await json(`${endpoint}/${action}`, {method: 'POST', signal: controller.signal,
+        ...(action === 'start' ? {body: JSON.stringify({rule: {...JSON.parse(signature), points, confirmed},
+          ...(review&&vision?.available?{vision_provider:vision.provider,vision_consent:vision.provider!=='local'}:{})})} : {})});
       if (!controller.signal.aborted) {
         refresh(); notify(action === 'start' ? 'Stream capture started. Short-clip findings appear in Video findings; tracking resets for each clip.' : 'Stream capture stopping.');
       }
@@ -55,12 +66,13 @@ export default function NetworkCamera({camera, rule, workerOnline, actionReady, 
   }
 
   return <section className="camera-capture network-camera" aria-label="Network stream analysis">
-    <h3>Network stream · {camera.protocol}</h3>
-    <p className="small-note">Records short clips ({camera.clip_seconds ?? 5}s for counting; longer when the dwell setting needs it) for YOLO + ByteTrack analysis (or the selected motion proxy). This is not a live annotated feed: tracking resets per clip, and capture/queue gaps can miss events. No frames are sent to hosted AI.</p>
+    <h3>Network stream · {camera.protocol || 'YouTube / RTSP / HLS'}</h3>
+    {!camera.configured&&<p className="info-note">No network source configured. Set <code>ZENITH_YOUTUBE_URL</code>, <code>ZENITH_CAMERA_URL</code> or <code>ZENITH_RTSP_URL</code> in the private backend environment and restart. <a className="text-link" href="#settings">Open health checks & setup →</a></p>}
+    <p className="small-note">Records short clips ({camera.clip_seconds ?? 5}s for counting; longer when the dwell setting needs it) for the selected detector, action model or motion proxy. This is not a live annotated feed: tracking resets per clip, and capture/queue gaps can miss events. YouTube adds playback delay. AI review is optional; Telegram evidence sharing is configured separately on the backend.</p>
     <p role="status">Stream: {camera.state}{camera.last_clip_at ? ` · last clip ${new Date(camera.last_clip_at * 1000).toLocaleString()}` : ''}</p>
     <div className="action-row">
-      <button type="button" className="button secondary" disabled={!connected || busy} onClick={() => void loadPreview()}>Preview stream</button>
-      <button type="button" className="button primary" disabled={!connected || busy || !workerOnline || !preview || !confirmed || !enough || !rule.name.trim() || !restartable} onClick={() => void control('start')}>Start stream analysis</button>
+      <button type="button" className="button secondary" disabled={!connected || !camera.configured || busy} onClick={() => void loadPreview()}>Preview stream</button>
+      <button type="button" className="button primary" disabled={!connected || !camera.configured || busy || !workerOnline || !preview || !confirmed || !enough || !rule.name.trim() || !restartable} onClick={() => void control('start')}>Start stream analysis</button>
       <button type="button" className="button secondary" disabled={!connected || busy || restartable || camera.state === 'in use by another operator'} onClick={() => void control('stop')}>Stop stream</button>
     </div>
     {preview && <>
@@ -85,6 +97,11 @@ export default function NetworkCamera({camera, rule, workerOnline, actionReady, 
         }}/>
       </details></>}
       {action&&<p className="small-note">{actionReady?"The action model watches the full frame.":"Install the action checkpoint in Settings."}</p>}
+      {vision?.available&&<label className="checkbox"><input type="checkbox" checked={review} onChange={event=>setReview(event.target.checked)}/>
+        {vision.provider==='local'?'Review saved incident evidence with the local model.':
+          `I have permission to send incident evidence from this stream session to ${vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'}.`}
+        {' '}Up to {vision.auto_limit} incidents per clip. Advisory only; alerts do not wait for review.
+      </label>}
       <label className="checkbox"><input type="checkbox" checked={confirmed} disabled={!enough} onChange={event => setApproval(event.target.checked ? currentApproval : '')}/>I reviewed the stream preview, settings and notification recipients.</label>
     </>}
   </section>;

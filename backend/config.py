@@ -68,6 +68,8 @@ CLIP_SECONDS = max(2.0, min(float(MAX_DURATION), CLIP_SECONDS))
 STORAGE_LIMIT = int(os.getenv('ZENITH_STORAGE_LIMIT_MB', '500')) * 1024 * 1024
 
 VISION_PROVIDER = os.getenv('VISION_PROVIDER', 'off').strip().lower()
+TYPESAFE_API_KEY = os.getenv('TYPESAFE_API_KEY', '').strip()
+TYPESAFE_MODEL = os.getenv('TYPESAFE_MODEL', 'jev-1.14.0').strip()
 NVIDIA_API_KEY = os.getenv('NVIDIA_API_KEY', '').strip()
 NVIDIA_VISION_MODEL = os.getenv('NVIDIA_VISION_MODEL', 'nvidia/nemotron-nano-12b-v2-vl').strip()
 LOCAL_VLM_BASE_URL = os.getenv('LOCAL_VLM_BASE_URL', 'http://127.0.0.1:11434/v1').strip().rstrip('/')

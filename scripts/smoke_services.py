@@ -29,10 +29,11 @@ with tempfile.TemporaryDirectory(prefix='zenith-services-', dir=temp_root) as di
     with TestClient(app) as client:
         assert client.get('/api/ready').status_code == 200
         real_capture = cv2.VideoCapture(str(ROOT / 'public' / 'examples' / 'traffic-counting.webm'))
-        with patch.dict(os.environ, {'ZENITH_RTSP_URL':'rtsp://127.0.0.1:8554/test'}), \
+        with patch.dict(os.environ, {'ZENITH_RTSP_URL':'rtsp://127.0.0.1:8554/test', 'ZENITH_YOUTUBE_URL':'', 'ZENITH_CAMERA_URL':''}), \
                 patch.object(cv2, 'VideoCapture', return_value=real_capture):
             preview = client.get('/api/cameras/rtsp/preview', headers=admin)
             assert preview.status_code == 200 and preview.content.startswith(b'\xff\xd8')
+        real_capture.release()
         print('Authenticated RTSP preview with a local video stand-in: OK')
         created = client.post('/api/operators', headers=admin, json={'label':'Test operator'})
         assert created.status_code == 201, created.text

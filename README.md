@@ -46,15 +46,25 @@ The commands above intentionally install CPU PyTorch. For a laptop NVIDIA GPU, c
 ## Pages
 - **Overview:** actual sources, observations, crossings and separate equipment/traffic carbon summaries. Honest empty states; no fabricated stats.
 - **Monitoring studio:** upload permitted-use clips or record a short browser-camera clip (HTTPS/localhost), inspect the suggested zone/line, describe what to watch, confirm and run. Browser camera capture is not continuous CCTV ingestion.
+- **Cameras & live streams:** enter named YouTube live URLs directly, then open each
+  camera's own page for same-frame sampled YOLO boxes, independent incident rules,
+  evidence and start/stop controls. Six saved inputs, three bounded captures and
+  two previews maximum; shared worker and storage limits still apply.
 - **Video findings:** an individual page for each video with its analysis, timeline, evidence, crossing corrections, source playback and downloadable per-run reports. Optional NVIDIA/local vision summaries inspect sampled frames only with configured sharing and explicit per-run consent.
 - **Demo footage:** Kaggle dataset/download links with file sizes, reuse/citation caveats and feature-availability disclosures.
 - **Incidents & evidence:** source-timestamped frames, decision history and notification outbox.
 - **Carbon & energy:** electricity/equipment, fuel and vehicle-class estimates with source provenance.
 - **Reports:** PDF with available evidence and CSV; workspace or single-run scope.
 - **How It Works:** separate explainer option, including actual limitations.
-- **Connection & settings:** local/Colab backend selection, worker heartbeat and integration readiness.
+- **Health & settings:** local/Colab backend selection, independent connection checks,
+  worker heartbeat, Jev/model access, Telegram bot testing, explicit stream-frame and
+  Telegram-message tests, and private-backend demo setup guidance.
 
 For a laptop-only RTSP/IP camera or permissioned HTTPS HLS stream, set `ZENITH_RTSP_URL` or `ZENITH_CAMERA_URL` in the backend environment and restart, then use **Studio → Preview stream → Start stream analysis** with a confirmed rule. This opt-in, single-process connector captures bounded clips for delayed analysis; it is not an always-on alerting service. Browser webcam recording remains available without network setup. See [HOW_TO_RUN.md](HOW_TO_RUN.md) for source/storage limits and privacy precautions.
+
+For a permissioned **YouTube livestream → YOLO trigger → Telegram** demo, see
+[YouTube + optional TypeSafe Jev setup](docs/YOUTUBE_JEV_DEMO.md). Jev image decisions
+are experimental advisory reviews, not required for alerting.
 
 The administrator can issue separate local operator keys in Settings; source and report access are scoped by key. Once any key is issued, automatic local sessions are disabled. Saved site factors keep region, year, class and citation; server-side calculations use the saved value. Stop services and run `scripts/backup_local.py` for an offline sensitive database/media archive. This local key scheme, backup script and bounded capture do **not** constitute public production multi-tenancy or an uptime guarantee.
 
@@ -118,7 +128,7 @@ See [docs/COLAB.md](docs/COLAB.md) and [notebooks/Zenith_Colab.ipynb](notebooks/
 - A local administrator key can create up to ten separate operator bearer keys, each with private records and protected artifacts. Creating one disables automatic local browser sessions. This is **not** production multi-tenant authentication. Rotating or losing a key changes ownership visibility; back up keys securely with the database.
 - SQLite WAL for laptop/Colab; PostgreSQL for Compose. One worker, 90-second leased jobs renewed by heartbeat, deterministic per-run event IDs. Interrupted inference restarts from the source; partial events remain labelled through incomplete run coverage.
 - At most three queued/processing jobs checked by API and thirty uploaded clips; limit sources to short video. Single-operator demo concurrency only, not robust public rate limiting. Put strict body, rate, CPU/time and storage quotas in a reverse proxy before exposing it. Do not accept untrusted customer footage in this MVP.
-- Media decoding runs on the host, not a sandbox. Updates, isolation and resource controls are required before handling hostile uploads. No remote URLs or RTSP credentials are accepted.
+- Media decoding runs on the host, not a sandbox. Updates, isolation and resource controls are required before handling hostile uploads. Browser URL input is restricted to validated YouTube watch/live links; arbitrary remote/internal URLs and RTSP credentials are not accepted from the browser.
 - No automatic retention/deletion, database migration framework, full health watchdog, cloud storage, escalation, or replay bundle. Optional single-process RTSP capture runs only when configured and started by an operator; it records short clips for delayed analysis, not continuous low-latency alerts. Stop it before backing up the laptop.
 - All data is local by default. Colab/ngrok, hosted NVIDIA review and optional email introduce third parties. Do not upload private customer footage without authorization.
 - Review Ultralytics code/model licensing (AGPL/enterprise options) and footage rights before commercial deployment.

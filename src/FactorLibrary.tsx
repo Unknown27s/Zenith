@@ -43,7 +43,7 @@ export default function FactorLibrary({kind,connected,onSelect,notify}: {
     <details><summary>Add a sourced factor for {kind}</summary><form onSubmit={event=>void add(event)}>
       <label>Name<input name="name" required minLength={2} maxLength={100} placeholder="Grid electricity / diesel / passenger car"/></label>
       <div className="form-grid"><label>Region or site<input name="region" required minLength={2} maxLength={100}/></label>
-        <label>Publication year<input name="year" type="number" required min="1900" max="2100"/></label></div>
+        <label>Publication year<input name="year" type="number" required min="1900" max="2100" defaultValue={new Date().getFullYear()}/></label></div>
       {kind==='traffic'&&<label>Vehicle class<select name="vehicle_class">{['car','motorcycle','bus','truck'].map(name=><option key={name} value={name}>{name}</option>)}</select></label>}
       <label>Factor ({kind==='traffic'?'g CO₂/vehicle-km':kind==='fuel'?'kg CO₂e/litre':'kg CO₂e/kWh'})<input name="factor" required type="number" step="any" min="0.000000001"/></label>
       <label>Original source (URL or document citation)<input name="source" required minLength={3} maxLength={1000}/></label>

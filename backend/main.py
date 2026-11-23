@@ -19,9 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, text
 
 from .config import ALL_RECIPIENTS, DATA, MAX_DURATION, MAX_UPLOAD, STORAGE_LIMIT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, TELEGRAM_SEND_EVIDENCE, TOKEN
-from .db import Carbon, EmissionFactor, Equipment, Incident, Notification, OperatorKey, Run, RunSummary, Session, Source, VisionReview, engine, init_db, serialize
-from .schemas import Action, CameraRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, ProposalRequest, RunRequest, VisionReviewRequest
-from . import camera, vision
+from .db import CameraInput, Carbon, EmissionFactor, Equipment, Incident, Notification, OperatorKey, Run, RunSummary, Session, Source, VisionReview, engine, init_db, serialize
+from .schemas import Action, CameraInputRequest, CameraRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, ProposalRequest, RunRequest, VisionReviewRequest
+from . import camera, vision, youtube, live_preview
 from .models import ACTION_UPLOAD, action_checkpoint, model_status
 from .alerts import telegram_probe, telegram_send
 
@@ -35,11 +35,12 @@ async def lifespan(app):
     try:
         yield
     finally:
-        camera.stop()
+        camera.stop_all()
+        live_preview.stop_all()
 
 
 app = FastAPI(title='Zenith monitoring', version='0.1.0', lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=os.getenv('ZENITH_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173').split(','), allow_methods=['GET', 'POST'], allow_headers=['Authorization', 'Content-Type', 'ngrok-skip-browser-warning'])
+app.add_middleware(CORSMiddleware, allow_origins=os.getenv('ZENITH_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173').split(','), allow_methods=['GET', 'POST'], allow_headers=['Authorization', 'Content-Type', 'ngrok-skip-browser-warning'], expose_headers=['X-Captured-At', 'X-Predicted-At'])
 security = HTTPBearer(auto_error=False)
 
 
@@ -154,8 +155,12 @@ def status(identity=Depends(owner)):
     vision_status = vision.provider_status()
     with Session() as session:
         used = sum(row.payload.get('bytes', 0) for row in session.scalars(select(Source).where(Source.owner == identity)))
+        saved_cameras = [{'id': row.id, 'name': row.payload['name'], **camera.saved_status(row.id)}
+                         for row in session.scalars(select(CameraInput).where(CameraInput.owner == identity))]
     return {'database': database_readiness(), 'camera': camera.status(identity), 'is_admin': identity == hashlib.sha256(TOKEN.encode()).hexdigest(),
             'storage_used_mb': round(used / 1024**2, 1), 'storage_limit_mb': STORAGE_LIMIT // 1024**2,
+            'saved_cameras': saved_cameras,
+            'camera_inputs_supported': True,
             'worker_online': age is not None and age < 45, 'worker_age_seconds': age,
             'email_mode': 'configured' if os.getenv('RESEND_API_KEY') and os.getenv('ZENITH_FROM_EMAIL') else 'preview',
             'channels': {'email': 'configured' if os.getenv('RESEND_API_KEY') and os.getenv('ZENITH_FROM_EMAIL') else 'preview',
@@ -250,7 +255,10 @@ def start_rtsp(body: CameraRequest, identity=Depends(owner)):
     if not heartbeat.exists() or time.time() - heartbeat.stat().st_mtime > 45:
         raise HTTPException(409, 'Start the analysis worker before starting a camera')
     try:
-        return camera.start(identity, body.rule.model_dump())
+        approval = vision.authorization(body.vision_provider, body.vision_consent) if body.vision_provider else None
+        return camera.start(identity, body.rule.model_dump(), approval)
+    except vision.ReviewError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -269,6 +277,134 @@ def preview_rtsp(identity=Depends(owner)):
         return Response(camera.snapshot(identity), media_type='image/jpeg')
     except ValueError as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+def camera_input_view(row):
+    return {**serialize(row), 'health': camera.saved_status(row.id), 'live': live_preview.status(row.id)}
+
+
+@app.get('/api/cameras')
+def camera_inputs(identity=Depends(owner)):
+    with Session() as session:
+        return [camera_input_view(row) for row in session.scalars(
+            select(CameraInput).where(CameraInput.owner == identity).order_by(CameraInput.created))]
+
+
+@app.post('/api/cameras', status_code=201)
+def add_camera_input(body: CameraInputRequest, identity=Depends(owner)):
+    canonical = youtube.video_url(body.url.strip())
+    if not canonical:
+        raise HTTPException(400, 'Paste an HTTPS YouTube watch/live video link. Arbitrary network URLs are not accepted from the browser.')
+    with Session() as session:
+        if session.bind.dialect.name == 'sqlite':
+            session.execute(text('BEGIN IMMEDIATE'))
+        elif session.bind.dialect.name == 'postgresql':
+            session.execute(select(func.pg_advisory_xact_lock(int(identity[:15], 16))))
+        rows = list(session.scalars(select(CameraInput).where(CameraInput.owner == identity)))
+        if len(rows) >= 6:
+            raise HTTPException(409, 'This demo supports six saved inputs per workspace')
+        if any(row.payload['url'] == canonical for row in rows):
+            raise HTTPException(409, 'This YouTube input is already saved in your workspace')
+        row = CameraInput(owner=identity, payload={'name': body.name.strip(), 'url': canonical})
+        session.add(row)
+        session.flush()
+        result = camera_input_view(row)
+        session.commit()
+        return result
+
+
+@app.post('/api/cameras/{camera_id}/remove')
+def remove_camera_input(camera_id: str, identity=Depends(owner)):
+    with Session() as session:
+        if session.bind.dialect.name == 'sqlite':
+            session.execute(text('BEGIN IMMEDIATE'))
+        else:
+            session.execute(select(CameraInput.id).where(CameraInput.id == camera_id).with_for_update())
+        row = owned(session, CameraInput, camera_id, identity)
+        try:
+            live_preview.forget(row.id)
+            camera.forget_saved(row.id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        session.delete(row)
+        session.commit()
+    return {'status': 'removed'}
+
+
+@app.get('/api/cameras/{camera_id}/preview')
+def preview_camera_input(camera_id: str, identity=Depends(owner)):
+    with Session() as session:
+        row = owned(session, CameraInput, camera_id, identity)
+        url = row.payload['url']
+    try:
+        return Response(camera.snapshot(identity, input_url=url), media_type='image/jpeg')
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post('/api/cameras/{camera_id}/start', status_code=202)
+def start_camera_input(camera_id: str, body: CameraRequest, identity=Depends(owner)):
+    check_model(body.rule)
+    check_recipients(body.rule)
+    heartbeat = DATA / 'worker.heartbeat'
+    if not heartbeat.exists() or time.time() - heartbeat.stat().st_mtime > 45:
+        raise HTTPException(409, 'Start the analysis worker before starting a camera')
+    with Session() as session:
+        # Serialize start/remove for this saved record. The connector is single-process.
+        if session.bind.dialect.name == 'sqlite':
+            session.execute(text('BEGIN IMMEDIATE'))
+        else:
+            session.execute(select(CameraInput.id).where(CameraInput.id == camera_id).with_for_update())
+        row = owned(session, CameraInput, camera_id, identity)
+        try:
+            approval = vision.authorization(body.vision_provider, body.vision_consent) if body.vision_provider else None
+            result = camera.start_saved(identity, row.id, row.payload['name'], row.payload['url'],
+                                        body.rule.model_dump(), approval)
+        except (ValueError, vision.ReviewError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        row.payload = {**row.payload, 'last_rule': body.rule.model_dump()}
+        session.commit()
+        return result
+
+
+@app.post('/api/cameras/{camera_id}/stop')
+def stop_camera_input(camera_id: str, identity=Depends(owner)):
+    with Session() as session:
+        row = owned(session, CameraInput, camera_id, identity)
+        return camera.stop_saved(row.id)
+
+
+@app.post('/api/cameras/{camera_id}/live/start', status_code=202)
+def start_camera_preview(camera_id: str, identity=Depends(owner)):
+    with Session() as session:
+        if session.bind.dialect.name == 'sqlite':
+            session.execute(text('BEGIN IMMEDIATE'))
+        else:
+            session.execute(select(CameraInput.id).where(CameraInput.id == camera_id).with_for_update())
+        row = owned(session, CameraInput, camera_id, identity)
+        try:
+            return live_preview.start(row.id, row.payload['url'])
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+
+@app.post('/api/cameras/{camera_id}/live/stop')
+def stop_camera_preview(camera_id: str, identity=Depends(owner)):
+    with Session() as session:
+        row = owned(session, CameraInput, camera_id, identity)
+        return live_preview.stop(row.id)
+
+
+@app.get('/api/cameras/{camera_id}/live/frame')
+def camera_preview_frame(camera_id: str, identity=Depends(owner)):
+    with Session() as session:
+        row = owned(session, CameraInput, camera_id, identity)
+        try:
+            jpeg, captured_at, predicted_at = live_preview.frame(row.id)
+        except ValueError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        return Response(jpeg, media_type='image/jpeg',
+                        headers={'X-Captured-At': str(captured_at), 'X-Predicted-At': str(predicted_at)})
 
 
 @app.get('/api/sources')
@@ -554,6 +690,16 @@ def notifications(identity=Depends(owner)):
 
 
 _last_alert_test = 0.0
+
+
+@app.get('/api/notifications/status')
+def notification_status(identity=Depends(administrator)):
+    """Explicit non-sending Telegram connectivity check. Never exposes the bot token."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
+        return {'configured': False, 'reachable': None,
+                'detail': 'Set TELEGRAM_BOT_TOKEN and ZENITH_TELEGRAM_CHATS on the backend, then restart.'}
+    reachable, detail = telegram_probe()
+    return {'configured': True, 'reachable': reachable, 'detail': detail}
 
 
 @app.post('/api/notifications/test')

@@ -16,6 +16,8 @@ temp_root.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='zenith-stream-', dir=temp_root) as folder:
     os.environ['ZENITH_DATA'] = folder
     os.environ['DATABASE_URL'] = f"sqlite:///{(Path(folder) / 'test.db').as_posix()}"
+    os.environ['ZENITH_YOUTUBE_URL'] = ''
+    os.environ['ZENITH_RTSP_URL'] = ''
     os.environ['ZENITH_CAMERA_URL'] = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
     os.environ['VISION_PROVIDER'] = 'off'
     from fastapi.testclient import TestClient

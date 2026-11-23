@@ -31,6 +31,9 @@ export async function request(path: string, init: RequestInit = {}) {
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   const response = await fetch(`${base}/api${path}`, { ...init, headers, signal: init.signal || AbortSignal.timeout(120000) });
   if (!response.ok) {
+    if (response.status === 405 && path.startsWith('/cameras')) {
+      throw new Error('This running backend does not support the new camera controls. Stop the old API/worker launcher with Ctrl+C, restart it with python start.py using your existing options, then refresh the dashboard. If the UI is hosted separately, verify its API origin in Health & settings.');
+    }
     let message = `Request failed (${response.status})`;
     try {
       const error = await response.json();

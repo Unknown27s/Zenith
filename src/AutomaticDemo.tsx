@@ -102,7 +102,7 @@ export default function AutomaticDemo({connected, workerOnline, actionReady, ref
       checkConnection();
       setStage(steps.length);
       const [,traffic,equipment] = completed;
-      const trafficClasses = Object.keys(classFactors).filter(name => traffic.counts[name] > 0);
+      const trafficClasses = Object.keys(classFactors).filter(name => (traffic?.counts?.[name] ?? 0) > 0);
       const roadInputs: DemoInput[] = trafficClasses.map(name => ({
         name:`Road traffic · ${name}`,kind:'traffic',run_id:traffic.id,vehicle_class:name,quantity:0,
         distance_km:.05,factor:classFactors[name],basis:'Completed traversals. The 50 m demo segment is an illustrative assumption.',

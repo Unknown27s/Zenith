@@ -114,7 +114,14 @@ export default function RunVideo({run, events = [], autoLoad = false}: {
       {overlayReady && <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
         {run.rule.capability === 'traffic'
           ? [points.slice(0,2),points.slice(2,4)].filter(gate=>gate.length===2).map(([a,b], i) =>
-            <line key={i} x1={a[0]*1000} y1={a[1]*1000} x2={b[0]*1000} y2={b[1]*1000}/>)
+            <g key={i}>
+              <line x1={a[0]*1000} y1={a[1]*1000} x2={b[0]*1000} y2={b[1]*1000}/>
+              {run.rule.segment_metres && (
+                <text x={a[0]*1000+10} y={a[1]*1000-8} fill="#d0ec85" fontSize="26" fontWeight="bold">
+                  {i === 0 ? 'Gate A' : 'Gate B'}
+                </text>
+              )}
+            </g>)
           : <polygon points={points.map(([x, y]) => `${x * 1000},${y * 1000}`).join(' ')}/>}
         {active && <rect x={active.box[0] * 1000} y={active.box[1] * 1000}
           width={(active.box[2] - active.box[0]) * 1000} height={(active.box[3] - active.box[1]) * 1000}/>}
@@ -132,6 +139,21 @@ export default function RunVideo({run, events = [], autoLoad = false}: {
       {url && crossings.length > 0 && <span className="run-video-live">
         {countSoFar} so far{active && <> · {active.vehicle_class} #{active.track_id}</>}
       </span>}
+    </div>}
+
+    {run.rule.capability === 'action' && <div className="run-video-summary">
+      <strong>{incidents.length} {incidents.length === 1 ? 'flagged observation' : 'flagged observations'}</strong>
+      <span>Action analysis · Pose classifier</span>
+    </div>}
+
+    {run.rule.capability === 'zone' && <div className="run-video-summary">
+      <strong>{incidents.length} {incidents.length === 1 ? 'zone observation' : 'zone observations'}</strong>
+      <span>{run.rule.dwell_seconds}s dwell threshold</span>
+    </div>}
+
+    {run.rule.capability === 'machine_activity' && <div className="run-video-summary">
+      <strong>{run.activity_seconds?.toFixed(2) ?? '0.00'}s visible motion</strong>
+      <span>Motion proxy analysis</span>
     </div>}
 
     {crossings.length > 0 && <div className="run-video-markers" role="group" aria-label="Crossing timestamps">

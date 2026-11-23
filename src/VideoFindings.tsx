@@ -269,7 +269,9 @@ function FindingTimeline({
           <div className="finding-marker" key={`${crossing.track_id}-${crossing.source_seconds}`}>
             <span>
               {formatSeconds(crossing.source_seconds)} · {crossing.vehicle_class} #{crossing.track_id} ·{' '}
-              {reviewed ? REVIEW_LABEL[reviewed] : 'Unreviewed'}
+              <span className={`badge ${reviewed === 'valid' ? 'success' : reviewed === 'false_positive' ? 'danger' : 'neutral'}`}>
+                {reviewed ? REVIEW_LABEL[reviewed] : 'Unreviewed'}
+              </span>
             </span>
             <button
               className="text-button"
@@ -350,7 +352,7 @@ function RunFindings({
   return (
     <div className="video-finding-run">
       <div className="workspace-run-heading">
-        <h3><a href={runLink(run)}>{run.rule.name}</a></h3><span className="badge">{runStatus(run)}</span>
+        <h3><a href={runLink(run)}>{run.rule.name}</a></h3><span className={`badge ${run.status === 'completed' ? 'success' : run.status === 'failed' ? 'danger' : 'neutral'}`}>{runStatus(run)}</span>
       </div>
       {run.analysis_settings&&<p className="small-note">
         {[run.analysis_settings.engine,run.analysis_settings.checkpoint,run.analysis_settings.classifier].filter(Boolean).join(' · ')}

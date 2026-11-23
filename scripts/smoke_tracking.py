@@ -11,7 +11,9 @@ sys.path.insert(0, str(ROOT))
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix='zenith-tracking-', dir='/tmp/opencode') as directory:
+    temp_root = Path(os.getenv('ZENITH_TEST_TEMP', str(Path(tempfile.gettempdir()) / 'opencode')))
+    temp_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='zenith-tracking-', dir=temp_root) as directory:
         with patch.dict(os.environ, {'ZENITH_DATA': directory, 'DATABASE_URL': f'sqlite:///{directory}/test.db',
                                      'VISION_PROVIDER': 'off'}):
             import cv2

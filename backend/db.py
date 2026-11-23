@@ -46,6 +46,10 @@ class Source(Record):
     __tablename__ = 'sources'
 
 
+class CameraInput(Record):
+    __tablename__ = 'camera_inputs'
+
+
 class Run(Record):
     __tablename__ = 'runs'
     status: Mapped[str] = mapped_column(String(24), default='queued', index=True)

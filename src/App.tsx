@@ -10,17 +10,21 @@ import { suggestedPoints } from './geometry';
 import VideoFindings from './VideoFindings';
 import CameraCapture from './CameraCapture';
 import NetworkCamera from './NetworkCamera';
+import CamerasPage from './CamerasPage';
 import OperatorKeys from './OperatorKeys';
+import HealthPanel from './HealthPanel';
+import DemoSetup from './DemoSetup';
 import FactorLibrary, { type SavedFactor } from './FactorLibrary';
 import { analysisModes, runLink, runStatus } from './workflow';
 
 const navigation: {id: Page; label: string; icon: typeof Activity}[] = [
   {id:'overview',label:'Overview',icon:Boxes}, {id:'studio',label:'Monitoring studio',icon:MonitorPlay},
+  {id:'cameras',label:'Cameras & live streams',icon:Camera},
   {id:'videos',label:'Video findings',icon:Film}, {id:'demos',label:'Demo footage',icon:ArrowDownToLine},
   {id:'incidents',label:'Incidents & evidence',icon:ShieldCheck}, {id:'carbon',label:'Carbon & energy',icon:Leaf},
   {id:'reports',label:'Reports',icon:FileText}, {id:'how',label:'How it works',icon:BookOpen},
 ];
-const titles: Record<Page, string> = {overview:'Workspace overview',studio:'Monitoring studio',videos:'Video findings',demos:'Demo footage library',incidents:'Incidents & evidence',carbon:'Carbon & energy',reports:'Reports',how:'How Zenith works',settings:'Connection & settings'};
+const titles: Record<Page, string> = {overview:'Workspace overview',studio:'Monitoring studio',cameras:'Cameras & live streams',videos:'Video findings',demos:'Demo footage library',incidents:'Incidents & evidence',carbon:'Carbon & energy',reports:'Reports',how:'How Zenith works',settings:'Connection & settings'};
 const empty: Data = {status:null,sources:[],runs:[],events:[],carbon:[],notifications:[]};
 const number = (n: number) => new Intl.NumberFormat('en-IN', {maximumFractionDigits:3}).format(n);
 const date = (n: number) => new Date(n*1000).toLocaleString();
@@ -51,6 +55,7 @@ export default function App() {
   const notify=useCallback((message:string)=>setNotice(message),[]);
   const refresh=useCallback(()=>setRevision(v=>v+1),[]);
   useEffect(()=>{const change=()=>{setRoute(window.location.hash.slice(1));setMobile(false);};window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change);},[]);
+  useEffect(()=>{document.title = `${titles[page] || 'Workspace'} · Zenith`;},[page]);
   useEffect(()=>{if(!notice)return;const t=window.setTimeout(()=>setNotice(''),6500);return()=>window.clearTimeout(t);},[notice]);
   useEffect(()=>{
     const current=connection();
@@ -82,7 +87,7 @@ export default function App() {
       <div className="nav-label">WORKSPACE</div>
       <nav aria-label="Main navigation">{navigation.map(({id,label,icon:Icon})=><a key={id} className={page===id?'active':''} href={`#${id}`} aria-current={page===id?'page':undefined}><Icon size={19}/><span>{label}</span>{id==='incidents'&&connected&&data.events.filter(x=>x.operator_status==='suspected').length>0&&<span className="nav-count">{data.events.filter(x=>x.operator_status==='suspected').length}</span>}</a>)}</nav>
       <div className="sidebar-bottom">
-        <a className={page==='settings'?'settings-link active':'settings-link'} href="#settings"><Settings2 size={18}/> Settings</a>
+        <a className={page==='settings'?'settings-link active':'settings-link'} href="#settings"><Settings2 size={18}/> Health & settings</a>
         <div className="operator"><span className="operator-avatar">Z</span><div><strong>{data.status?.is_admin?'Administrator':'Operator'}</strong><small>{connected?'Workspace connected':connecting?'Connecting':'Workspace disconnected'}</small></div></div>
       </div>
     </aside>
@@ -94,6 +99,7 @@ export default function App() {
         </div>}
         {page==='overview'&&<Overview {...props}/>}
         {page==='studio'&&<Studio key={selectedId} {...props} selectedSourceId={selectedId}/>}
+        {page==='cameras'&&<CamerasPage {...props} selectedId={selectedId}/>}
         {page==='videos'&&<VideoFindings data={data} connected={connected} refresh={refresh} notify={notify} selectedSourceId={selectedId} selectedRunId={selectedAnalysisId}/>}
         <div hidden={page!=='demos'}><DemoLibrary actionReady={!!data.status?.models?.action.checkpoint_present} connected={connected} workerOnline={!!data.status?.worker_online} notify={notify} refresh={refresh}/></div>
         {page==='incidents'&&<Incidents key={selectedId} {...props} selectedId={selectedId}/>}
@@ -124,7 +130,7 @@ function Overview({data,connected}: Props) {
             ?'The worker is accepting queued analyses.'
             :'Start the analysis worker before submitting footage.'}</p>
         </div>
-        <a className="button secondary" href="#settings"><Settings2 size={16}/> Settings</a>
+        <a className="button secondary" href="#settings"><Activity size={16}/> Check system health</a>
       </div>
       <dl className="workspace-metrics">
         <div><dt>Connection</dt><dd>{connected?'Connected':'Disconnected'}</dd></div>
@@ -161,7 +167,7 @@ function Overview({data,connected}: Props) {
 function RunList({runs}: {runs:Run[]}) {
   return <div className="run-list">{runs.map(run=><a key={run.id} className="run-row workspace-run" href={runLink(run)}>
     <span className="file-icon"><MonitorPlay size={20}/></span>
-    <div className="run-info"><strong>{run.source_name}</strong><small>{analysisModes[run.rule.capability].label} · {date(run.created)}</small>
+    <div className="run-info"><strong>{run.source_name}</strong><small>{analysisModes[run.rule.capability]?.label || run.rule.capability} · {date(run.created)}</small>
       {run.status==='processing'&&<progress aria-label="Analysis progress" value={run.progress} max={100}/>}
       {run.error&&<small className="error-text">{run.error}</small>}
     </div>
@@ -209,14 +215,14 @@ function Studio({data,connected,notify,refresh,selectedSourceId}: Props & {selec
     setBusy('proposal');try{const result=await json<{capability:Capability;dwell_seconds:number;model:string;warnings:string[]}>('/proposals',{method:'POST',body:JSON.stringify({instruction})});setCapability(result.capability);setDwell(String(result.dwell_seconds));setProposal(`${result.model}. ${result.warnings.join(' ')}`);setConfirmed(false);}catch(e){notify((e as Error).message);}finally{setBusy('');}
   }
   function rulePayload() {
-    return {capability,name:name.trim()||analysisModes[capability].label,instruction,points,dwell_seconds:Number(dwell),motion_threshold:Number(threshold),...detector,segment_metres:capability==='traffic'&&segment?Number(metres):null,action_confidence:Number(actionConfidence),recipients,alert_cooldown_seconds:Number(cooldown),confirmed};
+    return {capability,name:name.trim()||analysisModes[capability]?.label||'Analysis',instruction,points,dwell_seconds:Number(dwell),motion_threshold:Number(threshold),...detector,segment_metres:capability==='traffic'&&segment?Number(metres):null,action_confidence:Number(actionConfidence),recipients,alert_cooldown_seconds:Number(cooldown),confirmed};
   }
   async function run() {
     setFormError('');
     setBusy('run');
     try {
       const queued=await json<Run>('/runs',{method:'POST',body:JSON.stringify({source_id:sourceId,
-        ...(review&&vision?.available?{vision_provider:vision.provider,vision_consent:vision.provider==='nvidia'}:{}),
+        ...(review&&vision?.available?{vision_provider:vision.provider,vision_consent:vision.provider!=='local'}:{}),
         rule:rulePayload()})});
       setReview(false);
       refresh();
@@ -270,19 +276,29 @@ function Studio({data,connected,notify,refresh,selectedSourceId}: Props & {selec
     </fieldset>
     <div className="studio-grid"><div className="studio-main"><section className="panel"><div className="panel-heading"><div><h2>Source footage</h2><p>Short, fixed-camera clips work best. <a href="#demos">Choose an example →</a></p></div>{source&&<Badge>{source.input_type==='sample'?'Sample':'Upload'}</Badge>}</div><div className="source-controls"><label>Source video<select value={sourceId} disabled={!!busy} onChange={e=>setSourceId(e.target.value)}><option value="">Select an uploaded or sample clip</option>{data.sources.map(s=><option key={s.id} value={s.id}>{s.name} · {s.duration.toFixed(1)}s</option>)}</select></label><label className={`button secondary upload-button ${!connected||busy?'disabled':''}`}><Upload size={16}/>{busy==='upload'?'Uploading…':'Upload video'}<input type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm" disabled={!connected||!!busy} onChange={e=>{void upload(e.target.files?.[0]);e.target.value='';}}/></label></div>
        <details className="workspace-disclosure">
-         <summary>Camera sources</summary>
+          <summary>Camera sources</summary>
+          <p className="info-note">For YouTube inputs, paste URLs directly in <a className="text-link" href="#cameras">Cameras & live streams →</a>. Each saved camera has its own YOLO preview page and incident rule.</p>
          <CameraCapture disabled={!connected||!!busy} onClip={file=>void upload(file)}/>
-         {data.status?.camera?.configured&&<NetworkCamera camera={data.status.camera} rule={rulePayload()}
-           workerOnline={data.status.worker_online} actionReady={!missingAction} connected={connected} notify={notify} refresh={refresh}/>}
+          {data.status?.camera && (
+           <NetworkCamera camera={data.status.camera} rule={rulePayload()}
+             vision={vision} workerOnline={!!data.status.worker_online} actionReady={!missingAction} connected={connected} notify={notify} refresh={refresh}/>
+         )}
        </details>
        <div className="video-stage">{source?<>
         <ProtectedImage path={`/sources/${source.id}/preview`} alt="First source frame for monitoring geometry"/>
         {capability!=='action'&&<svg role="img" aria-label="Click to draw zone or gate" className="geometry" viewBox={`0 0 ${source.width} ${source.height}`} onClick={e=>{const rect=e.currentTarget.getBoundingClientRect();if(points.length<pointLimit){setPoints([...points,[(e.clientX-rect.left)/rect.width,(e.clientY-rect.top)/rect.height]]);setConfirmed(false);}}}>
           {points.length>1&&(capability==='traffic'?<>{[points.slice(0,2),points.slice(2,4)].filter(gate=>gate.length===2).map((gate,i)=><polyline key={i} points={gate.map(p=>`${p[0]*source.width},${p[1]*source.height}`).join(' ')}/>)}</>:<polygon points={points.map(p=>`${p[0]*source.width},${p[1]*source.height}`).join(' ')}/>)}
           {points.map((p,i)=><circle key={`${i}-${p}`} cx={p[0]*source.width} cy={p[1]*source.height} r={source.width/120}/>)}
+          {capability==='traffic'&&segment&&points.length>=2&&(
+            <text x={points[0][0]*source.width+6} y={points[0][1]*source.height-8} fill="#d0ec85" fontSize={Math.max(12, Math.round(source.width/50))} fontWeight="600" style={{paintOrder:'stroke',stroke:'#102019',strokeWidth:3}}>Gate A (entry)</text>
+          )}
+          {!data.status?.camera&&<p className="info-note">Connect a backend to configure YouTube, RTSP or HLS input. <a className="text-link" href="#settings">Open health checks & setup →</a></p>}
+          {capability==='traffic'&&segment&&points.length>=4&&(
+            <text x={points[2][0]*source.width+6} y={points[2][1]*source.height-8} fill="#d0ec85" fontSize={Math.max(12, Math.round(source.width/50))} fontWeight="600" style={{paintOrder:'stroke',stroke:'#102019',strokeWidth:3}}>Gate B (exit)</text>
+          )}
         </svg>}<span className="video-label">{source.input_type==='sample'?'SAMPLE PREVIEW':'PREVIEW'} · {source.name}</span>
       </>:<div className="video-empty"><Camera size={40}/><h3>Your video goes here</h3><p>Choose a licensed example in Demo Footage,<br/>or upload your own permitted-use clip.</p><span>MP4 / MOV / AVI / MKV / WebM · {data.status?.max_upload_mb||100} MB max</span></div>}</div>
-       <div className="geometry-toolbar"><span>{capability==='action'?'The model watches the full frame.':capability==='traffic'&&segment?'Draw Gate A and then Gate B, each from left to right.':'Review the suggested geometry for this clip.'} {capability!=='action'&&<strong>{points.length} points</strong>}</span><div>{source&&capability!=='action'&&<><button className="text-button" onClick={()=>{setPoints(points.slice(0,-1));setConfirmed(false);}}>Undo</button><button className="text-button" onClick={()=>{setPoints([]);setConfirmed(false);}}>Clear</button><button className="text-button" onClick={()=>resetGeometry()}>Reset suggestion</button></>}{source&&<button className="text-button" disabled={!!busy} onClick={()=>void openVideo()}>Play original</button>}</div></div>
+       <div className="geometry-toolbar"><span>{capability==='action'?'The model watches the full frame.':capability==='traffic'&&segment?'Draw Gate A (2 points) and then Gate B (2 points), each from left to right.':'Review the suggested geometry for this clip.'} {capability!=='action'&&<strong>({points.length}{pointLimit ? ` / ${pointLimit}` : ''} points)</strong>}</span><div>{source&&capability!=='action'&&<><button type="button" className="text-button" onClick={()=>{setPoints(points.slice(0,-1));setConfirmed(false);}}>Undo</button><button type="button" className="text-button" onClick={()=>{setPoints([]);setConfirmed(false);}}>Clear</button><button type="button" className="text-button" onClick={()=>resetGeometry()}>Reset suggestion</button></>}{source&&<button type="button" className="text-button" disabled={!!busy} onClick={()=>void openVideo()}>Play original</button>}</div></div>
       {source&&capability!=='action'&&<details className="coordinate-editor"><summary>Keyboard-accessible geometry editor</summary><p>Normalized coordinates, one x,y pair per line. Values range from 0 to 1.</p><textarea aria-label="Zone coordinates" key={JSON.stringify(points)} defaultValue={points.map(p=>p.join(', ')).join('\n')} onBlur={e=>{const rows=e.target.value.trim().split('\n').filter(Boolean).map(line=>line.split(',').map(Number));if(rows.length<=12&&rows.every(p=>p.length===2&&p.every(n=>Number.isFinite(n)&&n>=0&&n<=1))){setPoints(rows as Point[]);setConfirmed(false);}else notify('Coordinates must be x,y pairs between 0 and 1.');}}/></details>}
       {video&&<div className="original-player"><video controls src={video}/><button className="text-button" onClick={()=>setVideo('')}>Close original video</button></div>}</section>
       <details className="panel workspace-disclosure workspace-advanced">
@@ -298,8 +314,8 @@ function Studio({data,connected,notify,refresh,selectedSourceId}: Props & {selec
         {proposal&&<div className="info-note">{proposal}</div>}
       </details>
     </div><div className="studio-side"><section className="panel rule-panel">
-      <div className="panel-heading"><div><h2>Review rule</h2><p>{analysisModes[capability].label}</p></div></div>
-      <label>Run name (optional)<input placeholder={analysisModes[capability].label} value={name} onChange={e=>{setName(e.target.value);setConfirmed(false);}} maxLength={100}/></label>{(capability==='zone'||capability==='machine_activity')&&<label>Minimum sustained duration (seconds)<input type="number" min="0.2" max="120" step="0.2" value={dwell} onChange={e=>{setDwell(e.target.value);setConfirmed(false);}}/></label>}{capability==='traffic'&&<>
+      <div className="panel-heading"><div><h2>Review rule</h2><p>{analysisModes[capability]?.label || capability}</p></div></div>
+      <label>Run name (optional)<input placeholder={analysisModes[capability]?.label || 'Analysis name'} value={name} onChange={e=>{setName(e.target.value);setConfirmed(false);}} maxLength={100}/></label>{(capability==='zone'||capability==='machine_activity')&&<label>Minimum sustained duration (seconds)<input type="number" min="0.2" max="120" step="0.2" value={dwell} onChange={e=>{setDwell(e.target.value);setConfirmed(false);}}/></label>}{capability==='traffic'&&<>
       <label className="checkbox"><input type="checkbox" checked={segment} onChange={e=>{setSegment(e.target.checked);resetGeometry(e.target.checked);}}/> Count complete road segment traversals</label>
       {segment&&<label>Road distance between the gates (metres)<input type="number" min="0.1" max="10000" step="any" value={metres} onChange={e=>{setMetres(e.target.value);setConfirmed(false);}}/></label>}
       {segment&&source?.example_id==='traffic-counting'&&<p className="small-note">The demo starts with an illustrative 50 m distance.</p>}
@@ -312,8 +328,8 @@ function Studio({data,connected,notify,refresh,selectedSourceId}: Props & {selec
           :capability==='traffic'?'Vehicle counts · CO₂ uses documented factors':'Tracked people · zone and dwell rule'}</span>
       </div></div>{capability==='machine_activity'&&<div className="warning-note">Stationary powered equipment can look inactive. People, shadows and camera movement can look like operation. Do not use this as an on/off sensor.</div>}<label className="checkbox"><input type="checkbox" checked={confirmed} disabled={!enough} onChange={e=>setConfirmed(e.target.checked)}/><span>I reviewed the region, rule and notification recipients.</span></label>{vision?.available&&<label className="checkbox">
       <input type="checkbox" checked={review} onChange={e=>setReview(e.target.checked)}/>
-      <span>{vision.provider==='nvidia'
-        ? 'I have permission to send sampled frames and incident evidence from this clip to NVIDIA for an end-of-video summary and incident review.'
+       <span>{vision.provider!=='local'
+         ? `I have permission to send sampled frames and incident evidence from this clip to ${vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'} for advisory review.`
         : 'Summarize sampled video frames and review saved incident evidence with the local vision model.'} Up to {vision.auto_limit} incidents per run.</span>
     </label>}<button className="button primary full" disabled={!!blocker||!!busy} onClick={()=>void run()}>
       {busy==='run'?<LoaderCircle size={17} className="spin"/>:<MonitorPlay size={17}/>}
@@ -361,6 +377,9 @@ function IncidentVision({event,vision,connected,notify,refresh}: {
     <strong>Vision model interpretation</strong>
     {review?.status==='completed'&&<>
       <p>{review.summary}</p>
+      {review.decision&&<p><strong>Evidence decision:</strong> {review.decision}
+        {review.confidence!==undefined?` · model confidence ${(review.confidence*100).toFixed(0)}%`:''}
+        {' '}— advisory, not a verified incident.</p>}
       <p><strong>Limitations</strong> {review.limitations}</p>
       <small>{review.model} · {review.frame_count} evidence frame(s)</small>
     </>}
@@ -368,11 +387,11 @@ function IncidentVision({event,vision,connected,notify,refresh}: {
     {review?.status==='failed'&&<p>{review.error}</p>}
     {(!review||review.status==='not_requested')&&<p>{vision?.available?'Review the saved frames with the configured model.':vision?.detail||'Vision review is unavailable.'}</p>}
     {vision?.available&&!pending&&event.frames.length>0&&<>
-      {vision.provider==='nvidia'&&<label className="checkbox">
+      {vision.provider!=='local'&&<label className="checkbox">
         <input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>
-        <span>I have permission to send this incident’s evidence frames to NVIDIA.</span>
+        <span>I have permission to send this incident’s evidence frames to {vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'}.</span>
       </label>}
-      <button className="button secondary" type="button" disabled={!connected||busy||(vision.provider==='nvidia'&&!consent)} onClick={()=>void requestReview()}>
+      <button className="button secondary" type="button" disabled={!connected||busy||(vision.provider!=='local'&&!consent)} onClick={()=>void requestReview()}>
         {busy?'Queueing…':review?.status==='completed'||review?.status==='failed'?'Run review again':'Request review'}
       </button>
     </>}
@@ -381,6 +400,7 @@ function IncidentVision({event,vision,connected,notify,refresh}: {
 
 function Incidents({data,connected,notify,refresh,selectedId}: Props & {selectedId:string}) {
   const [filter,setFilter]=useState(selectedId==='review'?'suspected':'all');const [selected,setSelected]=useState(selectedId==='review'?'':selectedId);const [busy,setBusy]=useState(false);const [note,setNote]=useState('');
+  const closeModal=useCallback(()=>{setSelected('');if(window.location.hash.startsWith('#incidents/'))window.location.hash='#incidents';},[]);
   const event=data.events.find(e=>e.id===selected);
   useEffect(()=>{
     if(!event)return;
@@ -389,7 +409,7 @@ function Incidents({data,connected,notify,refresh,selectedId}: Props & {selected
     const focusable=()=>Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), textarea, input, select, a[href]')||[]);
     focusable()[0]?.focus();
     const keyboard=(event:KeyboardEvent)=>{
-      if(event.key==='Escape'){setSelected('');return;}
+      if(event.key==='Escape'){closeModal();return;}
       if(event.key!=='Tab')return;
       const controls=focusable();const first=controls[0],last=controls[controls.length-1];
       if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
@@ -403,7 +423,7 @@ function Incidents({data,connected,notify,refresh,selectedId}: Props & {selected
   async function act(action:string){if(!event)return;setBusy(true);try{await json(`/events/${event.id}/acknowledge`,{method:'POST',body:JSON.stringify({action,note})});setNote('');refresh();notify('Operator decision recorded.');}catch(e){notify((e as Error).message);}finally{setBusy(false);}}
   return <><Heading eyebrow="OBSERVATIONS, NOT ASSUMPTIONS" title="Incident review">Review the source evidence, record a decision, and keep people in control.</Heading><div className="tab-row">{[['all','All observations'],['suspected','Needs review'],['acknowledged','Acknowledged'],['confirmed','Confirmed'],['dismissed','Dismissed']].map(([id,label])=><button className={filter===id?'selected':''} key={id} onClick={()=>setFilter(id)}>{label}</button>)}</div><section className="panel">{events.length?<div className="incident-list">{events.map(e=><button className="incident-row" key={e.id} onClick={()=>{setSelected(e.id);setNote('');}}>{e.frames.length?<ProtectedImage path={`/events/${e.id}/evidence/${e.frames[0]}`} alt="Incident evidence"/>:<span className="empty-icon"><ShieldCheck/></span>}<div><div className="incident-title"><strong>{e.title}</strong><Badge tone={e.operator_status==='suspected'?'warning':'success'}>{e.operator_status}</Badge></div><p>{e.source_name} · source {e.source_seconds.toFixed(2)}s</p><small>{date(e.created)}</small></div><ArrowUpRight size={18}/></button>)}</div>:<Empty icon={ShieldCheck} title="No observations in this view">Rule-generated events will appear here after real footage is analyzed. An empty list is not a safety guarantee.</Empty>}</section>
     <section className="panel section-gap"><div className="panel-heading"><div><h2>Notification outbox</h2><p>Delivery state is separate from an operator’s acknowledgement.</p></div><Badge>{data.status?.channels?.telegram?.configured?'Telegram configured':data.status?.email_mode==='configured'?'Email configured':'Preview mode'}</Badge></div>{data.notifications.length?<div className="notification-list">{data.notifications.map(n=><details key={n.id}><summary><Bell size={17}/><span>{n.subject}<small>{recipientLabel(n.recipient)}</small></span><Badge tone={n.status==='sent'?'success':'neutral'}>{n.status}</Badge></summary><pre>{n.text}</pre><p>{n.delivery||n.error||'Preview does not mean sent. Configure Telegram or email, then verify with a test alert.'}</p></details>)}</div>:<div className="inline-empty">No notification tasks. Configure an approved recipient before running a rule.</div>}</section>
-    {event&&<div className="modal-backdrop" onClick={()=>setSelected('')}><section className="modal" role="dialog" aria-modal="true" aria-label="Incident review" onClick={e=>e.stopPropagation()}><div className="panel-heading"><div><Badge tone="warning">RULE OBSERVATION</Badge><h2>{event.title}</h2><p>{event.source_name} · source {event.source_seconds.toFixed(2)}s</p></div><button className="icon-button" aria-label="Close incident review" onClick={()=>setSelected('')}><X/></button></div><div className="evidence-grid">{event.frames.map(frame=><figure key={frame}><ProtectedImage path={`/events/${event.id}/evidence/${frame}`} alt={`${frame.includes('before')?'Before':frame.includes('after')?'After':'During'} event evidence`}/><figcaption>{frame.includes('before')?'Before':frame.includes('after')?'After':'During'}</figcaption></figure>)}</div><p>{event.detail}</p>{event.alert?.status==='suppressed'&&<div className="info-note">Alert suppressed for {event.alert.cooldown_seconds}s after the previous alert for this rule. The incident and evidence were kept.{event.alert.suppressed_until?` Next alert allowed after ${date(event.alert.suppressed_until)}.`:''}</div>}{event.alert?.status==='queued'&&<div className="info-note">Alert queued to {event.alert.recipients?.length||0} recipient(s). Delivery state is in the notification outbox.</div>}<IncidentVision key={event.id} event={event} vision={data.status?.vision} connected={connected} notify={notify} refresh={refresh}/><label>Action note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength={1000} placeholder="What did you verify? What action was taken?"/></label><div className="action-row"><button className="button primary" disabled={!connected||busy} onClick={()=>void act('acknowledged')}><Check size={16}/> Acknowledge</button><button className="button secondary" disabled={!connected||busy} onClick={()=>void act('confirmed')}>Confirm observation</button><button className="button secondary" disabled={!connected||busy} onClick={()=>void act('dismissed')}>Dismiss</button></div><div className="history">{event.history.map(h=><p key={`${h.at}-${h.action}`}><strong>{h.action}</strong> · {date(h.at)}<br/>{h.note}</p>)}</div></section></div>}
+    {event&&<div className="modal-backdrop" onClick={closeModal}><section className="modal" role="dialog" aria-modal="true" aria-label="Incident review" onClick={e=>e.stopPropagation()}><div className="panel-heading"><div><Badge tone="warning">RULE OBSERVATION</Badge><h2>{event.title}</h2><p>{event.source_name} · source {event.source_seconds.toFixed(2)}s</p></div><button className="icon-button" aria-label="Close incident review" onClick={closeModal}><X/></button></div><div className="evidence-grid">{event.frames.map(frame=><figure key={frame}><ProtectedImage path={`/events/${event.id}/evidence/${frame}`} alt={`${frame.includes('before')?'Before':frame.includes('after')?'After':'During'} event evidence`}/><figcaption>{frame.includes('before')?'Before':frame.includes('after')?'After':'During'}</figcaption></figure>)}</div><p>{event.detail}</p>{event.alert?.status==='suppressed'&&<div className="info-note">Alert suppressed for {event.alert.cooldown_seconds}s after the previous alert for this rule. The incident and evidence were kept.{event.alert.suppressed_until?` Next alert allowed after ${date(event.alert.suppressed_until)}.`:''}</div>}{event.alert?.status==='queued'&&<div className="info-note">Alert queued to {event.alert.recipients?.length||0} recipient(s). Delivery state is in the notification outbox.</div>}<IncidentVision key={event.id} event={event} vision={data.status?.vision} connected={connected} notify={notify} refresh={refresh}/><label>Action note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength={1000} placeholder="What did you verify? What action was taken?"/></label><div className="action-row"><button className="button primary" disabled={!connected||busy} onClick={()=>void act('acknowledged')}><Check size={16}/> Acknowledge</button><button className="button secondary" disabled={!connected||busy} onClick={()=>void act('confirmed')}>Confirm observation</button><button className="button secondary" disabled={!connected||busy} onClick={()=>void act('dismissed')}>Dismiss</button></div><div className="history">{event.history.map(h=><p key={`${h.at}-${h.action}`}><strong>{h.action}</strong> · {date(h.at)}<br/>{h.note}</p>)}</div></section></div>}
   </>;
 }
 
@@ -509,7 +529,7 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
 function Reports({data,connected,notify}:Props) {
   const [runId,setRunId]=useState('');const [busy,setBusy]=useState('');
   async function exportReport(format:string){setBusy(format);try{await download(`/reports/${format}${runId?`?run_id=${encodeURIComponent(runId)}`:''}`,`zenith-report.${format}`);notify('Report downloaded.');}catch(e){notify((e as Error).message);}finally{setBusy('');}}
-  return <><Heading eyebrow="AN EVIDENCE TRAIL YOU CAN SHARE" title="Take the full picture with you.">Export saved observations, decisions, vehicle counts and transparent carbon calculations.</Heading><div className="reports-grid"><section className="panel report-config"><div className="panel-heading"><div><h2>Build your report</h2><p>Reports use saved backend records, not dashboard screenshots.</p></div><FileText size={22}/></div><label>Scope<select value={runId} onChange={e=>setRunId(e.target.value)}><option value="">Entire operator workspace</option>{data.runs.map(r=><option key={r.id} value={r.id}>{r.source_name} · {r.id.slice(0,8)}</option>)}</select></label><div className="report-includes">{['Run status and analysis coverage','Suspected events and available evidence','Operator decisions and action notes','Vehicle class counts and activity runtime','Carbon formulas, sources and assumptions','Explicit unavailable-feature disclosures'].map(text=><div key={text}><Check size={17}/>{text}</div>)}</div><div className="action-row"><button className="button primary" disabled={!connected||!!busy} onClick={()=>void exportReport('pdf')}><ArrowDownToLine size={17}/>{busy==='pdf'?'Generating…':'Download PDF'}</button><button className="button secondary" disabled={!connected||!!busy} onClick={()=>void exportReport('csv')}><ArrowDownToLine size={17}/> Export CSV</button></div><p className="small-note">Run-scoped exports include only carbon entries explicitly linked to that run.</p></section><div className="report-preview"><div className="paper"><div className="paper-brand">zenith.</div><span>OPERATIONS / EVIDENCE REPORT</span><h2>Clarity, documented.</h2><p>Safety observations<br/>Activity & carbon estimates</p><div className="paper-line"/><div className="paper-line short"/><div className="paper-metrics"><span><ShieldCheck size={21}/><small>Evidence</small></span><span><Leaf size={21}/><small>Estimates</small></span></div><div className="paper-line"/><div className="paper-line short"/><div className="paper-footer">ILLUSTRATIVE COVER · NOT A GENERATED REPORT</div></div></div></div></>;
+  return <><Heading eyebrow="AN EVIDENCE TRAIL YOU CAN SHARE" title="Take the full picture with you.">Export saved observations, decisions, vehicle counts and transparent carbon calculations.</Heading><div className="reports-grid"><section className="panel report-config"><div className="panel-heading"><div><h2>Build your report</h2><p>Reports use saved backend records, not dashboard screenshots.</p></div><FileText size={22}/></div><label>Scope<select value={runId} onChange={e=>setRunId(e.target.value)}><option value="">Entire operator workspace</option>{data.runs.map(r=><option key={r.id} value={r.id}>{r.rule.name ? `${r.rule.name} (${r.source_name})` : r.source_name} · {r.id.slice(0,8)}</option>)}</select></label><div className="report-includes">{['Run status and analysis coverage','Suspected events and available evidence','Operator decisions and action notes','Vehicle class counts and activity runtime','Carbon formulas, sources and assumptions','Explicit unavailable-feature disclosures'].map(text=><div key={text}><Check size={17}/>{text}</div>)}</div><div className="action-row"><button className="button primary" disabled={!connected||!!busy} onClick={()=>void exportReport('pdf')}><ArrowDownToLine size={17}/>{busy==='pdf'?'Generating…':'Download PDF'}</button><button className="button secondary" disabled={!connected||!!busy} onClick={()=>void exportReport('csv')}><ArrowDownToLine size={17}/> Export CSV</button></div><p className="small-note">Run-scoped exports include only carbon entries explicitly linked to that run.</p></section><div className="report-preview"><div className="paper"><div className="paper-brand">zenith.</div><span>OPERATIONS / EVIDENCE REPORT</span><h2>Clarity, documented.</h2><p>Safety observations<br/>Activity & carbon estimates</p><div className="paper-line"/><div className="paper-line short"/><div className="paper-metrics"><span><ShieldCheck size={21}/><small>Evidence</small></span><span><Leaf size={21}/><small>Estimates</small></span></div><div className="paper-line"/><div className="paper-line short"/><div className="paper-footer">ILLUSTRATIVE COVER · NOT A GENERATED REPORT</div></div></div></div></>;
 }
 
 function HowItWorks() {
@@ -528,10 +548,6 @@ function HowItWorks() {
 
 function Settings({data,connected,notify,refresh}:Props) {
   const [base,setBase]=useState(connection().base);const [key,setKey]=useState(connection().key);const [busy,setBusy]=useState(false);
-  const [probe,setProbe]=useState<VisionStatus|null>(null);
-  const [probing,setProbing]=useState(false);
-  const [alertResult,setAlertResult]=useState('');
-  const [alerting,setAlerting]=useState(false);
   const [installing,setInstalling]=useState(false);
   const models=data.status?.models;
   async function installModel(file:File|undefined){
@@ -546,50 +562,16 @@ function Settings({data,connected,notify,refresh}:Props) {
     }catch(error){notify((error as Error).message);}
     finally{setInstalling(false);}
   }
-  const vision=data.status?.vision;
-  useEffect(()=>setProbe(null),[connected,vision?.provider,vision?.model]);
-  async function checkVision() {
-    setProbing(true);
-    try {
-      setProbe(await json<VisionStatus>('/vision/status'));
-    } catch(error) {
-      notify((error as Error).message);
-    } finally {
-      setProbing(false);
-    }
-  }
-  async function testAlert() {
-    setAlerting(true); setAlertResult('');
-    try {
-      const result = await json<{bot:string; results:{chat:string; delivered:boolean; detail:string}[]}>('/notifications/test',{method:'POST'});
-      setAlertResult([result.bot, ...result.results.map(item => `chat ${item.chat}: ${item.detail}`)].join(' · '));
-      refresh();
-    } catch(error) {
-      setAlertResult((error as Error).message);
-    } finally {
-      setAlerting(false);
-    }
-  }
-  async function apply(e:FormEvent){e.preventDefault();setBusy(true);const previous=connection();setProbe(null);try{if(base){const url=new URL(base);if(!['http:','https:'].includes(url.protocol)||!['localhost','127.0.0.1'].includes(url.hostname)&&url.protocol!=='https:'||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw new Error('Use an HTTPS origin, or a loopback HTTP origin, without a path or credentials.');}if(key.length<24)throw new Error('Enter the operator key generated by the backend.');sessionStorage.setItem('zenith.base',base.replace(/\/$/,''));sessionStorage.setItem('zenith.key',key);await json('/status');refresh();notify('Backend connected. Operator access verified.');}catch(e){sessionStorage.setItem('zenith.base',previous.base);sessionStorage.setItem('zenith.key',previous.key);notify((e as Error).message);}finally{setBusy(false);}}
-  return <><Heading eyebrow="YOUR COMPUTE. YOUR WORKSPACE." title="Connect where you run.">Use the laptop backend first. Switch to a temporary Colab endpoint when appropriate.</Heading><div className="settings-grid"><section className="panel settings-form"><div className="panel-heading"><div><h2>Backend connection</h2><p>The key stays in this browser tab’s session storage.</p></div><Badge tone={connected?'success':'neutral'}>{connected?'Connected':'Disconnected'}</Badge></div><form onSubmit={apply}><label>API origin<input type="url" value={base} onChange={e=>setBase(e.target.value)} placeholder="Blank = this dashboard’s server · or https://your-tunnel.ngrok-free.app"/></label><p className="small-note">Leave blank when opening the dashboard from the Colab notebook or running locally. On Vercel, paste the HTTPS origin printed by the notebook.</p><label>Operator API key<input type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} required minLength={24} placeholder="From data/operator.key or ZENITH_API_KEY"/></label><div className="action-row"><button className="button primary" disabled={busy} type="submit"><Radio size={17}/>{busy?'Connecting…':'Verify & connect'}</button><button type="button" className="button secondary" onClick={()=>{sessionStorage.removeItem('zenith.key');setKey('');refresh();notify('Browser disconnected. Backend records remain saved.');}}>Disconnect</button></div></form></section><section className="panel health-panel"><div className="panel-heading"><div><h2>Service readiness</h2><p>Actual connected-backend state.</p></div><Activity size={21}/></div>{[
-      ['API',connected?'Connected':'Not connected',connected],['Database',connected&&data.status?.database?`${data.status.database.engine} · ${data.status.database.ready?'Ready':'Unavailable'}`:'Not connected',!!(connected&&data.status?.database?.ready)],['Source storage',connected?`${data.status?.storage_used_mb??0} / ${data.status?.storage_limit_mb??'?'} MB`:'Not connected',!!connected],['Analysis worker',data.status?.worker_online&&connected?'Heartbeat fresh':'No fresh heartbeat',!!data.status?.worker_online&&connected],['Email',connected&&data.status?.email_mode==='configured'?'Provider configured':'Preview only',false],['Telegram',connected&&data.status?.channels?.telegram?data.status.channels.telegram.configured?`${data.status.channels.telegram.chats} chat(s) allowlisted`:'Not configured':'Not connected',!!(connected&&data.status?.channels?.telegram?.configured)],['Vision model',connected&&vision?.configured?`${vision.provider} · ${vision.model}`:'Off or unavailable',!!(connected&&vision?.available)],['Network stream',data.status?.camera?.configured?`${data.status.camera.protocol} · ${data.status.camera.state}`:'Not configured',!!(connected&&data.status?.camera?.state==='capturing')],
-  ].map(([label,value,ok])=><div className="health-row" key={String(label)}><span>{label}</span><span><span className={`status-dot ${ok?'on':''}`}/>{value}</span></div>)}
-    {connected&&vision&&<div className="small-note">
-      <p>{vision.detail}</p>
-      {vision.configured&&<button className="button secondary" type="button" disabled={probing} onClick={()=>void checkVision()}>{probing?'Checking…':'Check model connection'}</button>}
-       {probe&&<p role="status">{probe.model_access===true?'Model listed. ':probe.reachable===true?'Endpoint answered, model access unconfirmed. ':probe.reachable===false?'Unreachable. ':''}{probe.detail}</p>}
-    </div>}
-    {connected&&data.status?.is_admin&&<div className="small-note">
-      <p>Telegram alerts are sent by the backend worker using <code>TELEGRAM_BOT_TOKEN</code> and <code>ZENITH_TELEGRAM_CHATS</code> from <code>.env</code>. The token is never sent to this browser. Each chat must have pressed Start on the bot. Evidence photos are {data.status?.channels?.telegram?.evidence ? 'enabled' : 'off'}; set <code>TELEGRAM_SEND_EVIDENCE=true</code> to attach one saved frame.</p>
-      <button className="button secondary" type="button" disabled={alerting||!data.status?.channels?.telegram?.configured} onClick={()=>void testAlert()}>{alerting?'Sending…':'Send test Telegram alert'}</button>
-      {!data.status?.channels?.telegram?.configured&&<p>Telegram is not configured on this backend.</p>}
-      {alertResult&&<p role="status">{alertResult}</p>}
-    </div>}
-     </section></div>{connected&&models&&<section className="panel section-gap">
+  async function apply(e:FormEvent){e.preventDefault();setBusy(true);const previous=connection();try{if(base){const url=new URL(base);if(!['http:','https:'].includes(url.protocol)||!['localhost','127.0.0.1'].includes(url.hostname)&&url.protocol!=='https:'||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw new Error('Use an HTTPS origin, or a loopback HTTP origin, without a path or credentials.');}if(key.length<24)throw new Error('Enter the operator key generated by the backend.');sessionStorage.setItem('zenith.base',base.replace(/\/$/,''));sessionStorage.setItem('zenith.key',key);await json('/status');refresh();notify('Backend connected. Operator access verified.');}catch(e){sessionStorage.setItem('zenith.base',previous.base);sessionStorage.setItem('zenith.key',previous.key);notify((e as Error).message);}finally{setBusy(false);}}
+  return <><Heading eyebrow="CONNECTIONS & DIAGNOSTICS" title="Health & settings">Check service connections, configure your demo and manage analysis models.</Heading><div className="settings-grid"><section className="panel settings-form"><div className="panel-heading"><div><h2>Backend connection</h2><p>The key stays in this browser tab’s session storage.</p></div><Badge tone={connected?'success':'neutral'}>{connected?'Connected':'Disconnected'}</Badge></div><form onSubmit={apply}><label>API origin<input type="url" value={base} onChange={e=>setBase(e.target.value)} placeholder="Blank = this dashboard’s server · or https://your-tunnel.ngrok-free.app"/></label><p className="small-note">Leave blank when opening the dashboard from the Colab notebook or running locally. On Vercel, paste the HTTPS origin printed by the notebook.</p><label>Operator API key<input type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} required minLength={24} placeholder="From data/operator.key or ZENITH_API_KEY"/></label><div className="action-row"><button className="button primary" disabled={busy} type="submit"><Radio size={17}/>{busy?'Connecting…':'Verify & connect'}</button><button type="button" className="button secondary" onClick={()=>{sessionStorage.removeItem('zenith.key');setKey('');refresh();notify('Browser disconnected. Backend records remain saved.');}}>Disconnect</button></div></form>
+    <div className="settings-email-note"><strong>Email notifications</strong><p>{connected ? data.status?.email_mode==='configured' ? 'Provider configured; delivery not tested.' : 'Preview only; configure RESEND_API_KEY and ZENITH_FROM_EMAIL on the backend to send.' : 'Connect to see email configuration.'}</p></div>
+    </section><HealthPanel status={data.status} connected={connected} refresh={refresh}/></div>
+    <DemoSetup status={data.status} connected={connected}/>
+    {connected&&<section className="panel section-gap">
       <div className="panel-heading"><div><h2>Analysis models</h2><p>Used by the connected analysis worker.</p></div><Cpu size={22}/></div>
-      <div className="health-row"><span>Traffic and CO₂</span><span>{models.traffic.detector} · {models.traffic.tracker} · class emission factors</span></div>
-      <div className="health-row"><span>Fight and fall</span><span>{models.action.detector} · {models.action.checkpoint_present?models.action.classifier:'Checkpoint needed'}</span></div>
-      {data.status?.is_admin&&models.action.upload_enabled&&<label className="button secondary upload-button">
+      <div className="health-row"><span>Traffic and CO₂</span><span>{models?.traffic.detector || 'YOLOv8 Nano'} · {models?.traffic.tracker || 'ByteTrack'} · class emission factors</span></div>
+      <div className="health-row"><span>Fight and fall</span><span>{models?.action.detector || 'YOLO11 Pose'} · {models?.action.checkpoint_present ? models.action.classifier : 'Checkpoint needed'}</span></div>
+      {data.status?.is_admin&&(models?.action.upload_enabled ?? true)&&<label className="button secondary upload-button">
         <Upload size={16}/>{installing?'Validating checkpoint…':'Upload Colab action checkpoint'}<input type="file" accept=".pt" disabled={installing} onChange={e=>{void installModel(e.target.files?.[0]);e.target.value='';}}/>
       </label>}
       <p className="small-note">Connect with the administrator key to install zenith_cctv_action.pt from the training notebook. The worker loads it when you run a fight and fall analysis.</p>

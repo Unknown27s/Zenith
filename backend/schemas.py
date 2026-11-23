@@ -93,12 +93,19 @@ class Rule(StrictModel):
 class RunRequest(StrictModel):
     source_id: str = Field(max_length=64)
     rule: Rule
-    vision_provider: Literal['nvidia', 'local'] | None = None
+    vision_provider: Literal['nvidia', 'local', 'typesafe'] | None = None
     vision_consent: StrictBool = False
 
 
 class CameraRequest(StrictModel):
     rule: Rule
+    vision_provider: Literal['nvidia', 'local', 'typesafe'] | None = None
+    vision_consent: StrictBool = False
+
+
+class CameraInputRequest(StrictModel):
+    name: str = Field(min_length=1, max_length=80, pattern=r'\S')
+    url: str = Field(min_length=1, max_length=2048)
 
 
 class OperatorKeyRequest(StrictModel):
@@ -160,7 +167,7 @@ class CarbonRequest(StrictModel):
 
 
 class VisionReviewRequest(StrictModel):
-    provider: Literal['nvidia', 'local']
+    provider: Literal['nvidia', 'local', 'typesafe']
     consent: StrictBool = False
 
 

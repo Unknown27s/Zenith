@@ -97,6 +97,8 @@ def save_incident(run, token, frame_index, timestamp, title, detail, frames, aut
         recipients = [recipient for recipient in rule.get('recipients', []) if recipient in ALL_RECIPIENTS]
         cooldown = float(rule.get('alert_cooldown_seconds', 300))
         fingerprint = rule_fingerprint(rule)
+        if run.payload.get('camera_id'):
+            fingerprint = hashlib.sha256(f"{run.payload['camera_id']}:{fingerprint}".encode()).hexdigest()[:32]
         previous = (recent_alert(session, run.owner, fingerprint, time.time() - cooldown)
                     if recipients and cooldown > 0 else None)
         notification_ids = {recipient: hashlib.sha256(f'{event_id}:{recipient}'.encode()).hexdigest()[:48]
@@ -115,6 +117,7 @@ def save_incident(run, token, frame_index, timestamp, title, detail, frames, aut
                      'notification_ids': [notification_ids[recipient] for recipient in recipients]}
         event = Incident(id=event_id, owner=run.owner, run_id=run.id, payload={
             'run_id': run.id, 'source_id': run.payload['source_id'], 'source_name': run.payload['source_name'],
+            'camera_id': run.payload.get('camera_id'), 'camera_name': run.payload.get('camera_name'),
             'source_seconds': round(timestamp, 3), 'processed_at': time.time(), 'title': title, 'detail': detail,
             'severity': 'review' if run.payload['rule']['capability'] == 'machine_activity' else 'attention',
             'rule_version': 'v2', 'rule_name': run.payload['rule']['name'], 'frames': names,
