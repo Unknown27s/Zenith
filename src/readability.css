@@ -201,6 +201,7 @@ nav a.active { color: #214c2c; background: #e2edce; font-weight: 600; }
 .report-includes svg { color: #3f702e; }
 .paper > span { font-size: 10px; color: #425c36; }
 .paper p { font-size: 14px; color: #425c36; }
+.paper h2 { color: #3d5c35; }
 .paper-metrics small { font-size: 12px; color: #425c36; }
 .paper-footer { font-size: 10px; color: #4f6045; line-height: 1.7; }
 .how-intro h2 { font-size: 32px; color: #f5f8ec; }
@@ -324,3 +325,23 @@ nav a.active { color: #214c2c; background: #e2edce; font-weight: 600; }
 .run-video-player rect { stroke: #ffdc61; }
 .run-video-markers { display: flex; flex-wrap: wrap; gap: 8px; max-height: 170px; overflow: auto; }
 .run-info .text-link { display: inline-block; margin-top: 4px; }
+
+/* Keep added video/stream controls aligned with the original panel gutters. */
+.studio-main .camera-capture { margin: 18px 24px; }
+.network-camera { border: 1px solid var(--border); border-radius: 8px; padding: 18px; background: #f7faf3; }
+.network-camera h3, .network-camera p { margin-bottom: 12px; }
+.network-camera .video-stage { margin: 16px 0; }
+.network-camera .geometry-toolbar { padding: 12px 0; }
+.recipient-group { margin: 0; padding: 12px; border: 1px solid #dfe4db; border-radius: 7px; min-width: 0; display: grid; gap: 8px; }
+.recipient-group legend { padding: 0 4px; font-size: 12px; font-weight: 550; color: #46534b; }
+.recipient-group p { margin: 0; font-size: 12px; color: #6b776f; }
+.recipient-group .checkbox { flex-direction: row; align-items: center; gap: 8px; font-size: 12px; font-weight: 400; color: #42564b; }
+.video-finding-run { padding: 22px 24px; }
+.video-finding-run > h3, .video-finding-run > p { margin-bottom: 12px; }
+.video-findings-list > .panel > p { padding: 0 24px 24px; }
+:root { color-scheme: light; }
+@media (max-width: 760px) {
+  .studio-main .camera-capture { margin: 16px 18px; }
+  .network-camera { padding: 14px; }
+  .video-finding-run { padding: 18px; }
+}

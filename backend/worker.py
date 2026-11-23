@@ -1,18 +1,21 @@
 """One leased file-analysis worker. Run with python -m backend.worker."""
 import hashlib
+import json
 import logging
 import os
 import threading
 import time
 import uuid
 from collections import deque
+from pathlib import Path
 
 import cv2
 import httpx
 import numpy as np
 from sqlalchemy import or_, select, update
 
-from .config import DATA, RECIPIENTS, VISION_AUTO_LIMIT
+from .alerts import telegram_send, telegram_send_photo
+from .config import ALL_RECIPIENTS, DATA, TELEGRAM_BOT_TOKEN, TELEGRAM_SEND_EVIDENCE, VISION_AUTO_LIMIT, telegram_chat
 from .db import Incident, Notification, Run, Session, Source, VisionReview, init_db
 from .vision import process_one_review, process_one_summary
 
@@ -57,6 +60,21 @@ def update_run(run_id, token, **changes):
         session.commit()
 
 
+def rule_fingerprint(rule):
+    """Stable identity for one rule; recipients and cooldown do not change what is detected."""
+    tracked = {key: value for key, value in rule.items()
+               if key not in {'recipients', 'recipient', 'alert_cooldown_seconds', 'confirmed'}}
+    return hashlib.sha256(json.dumps(tracked, sort_keys=True).encode()).hexdigest()[:32]
+
+
+def recent_alert(session, owner, rule_key, since):
+    """Most recent alert for this exact rule inside the cooldown window."""
+    rows = session.scalars(select(Notification).where(
+        Notification.owner == owner, Notification.created >= since,
+        Notification.status.in_(['pending', 'retry', 'sent', 'preview'])).order_by(Notification.created.desc()).limit(200))
+    return next((row for row in rows if row.payload.get('rule_key') == rule_key), None)
+
+
 def save_incident(run, token, frame_index, timestamp, title, detail, frames, auto_review):
     event_id = hashlib.sha256(f'{run.id}:{frame_index}:{title}:{detail}'.encode()).hexdigest()[:40]
     with Session() as session:
@@ -65,27 +83,58 @@ def save_incident(run, token, frame_index, timestamp, title, detail, frames, aut
             raise RuntimeError('Worker lease lost')
         if session.get(Incident, event_id):
             return event_id
+        rule = run.payload['rule']
         names = []
+        named = []
         for label, image in frames:
             name = f'{event_id}-{label}.jpg'
             if cv2.imwrite(str(DATA / 'evidence' / name), image):
                 names.append(name)
+                named.append((label, name))
+        # Only allowlisted recipients become notification rows. A stopped/expired config cannot leak delivery.
+        recipients = [recipient for recipient in rule.get('recipients', []) if recipient in ALL_RECIPIENTS]
+        cooldown = float(rule.get('alert_cooldown_seconds', 300))
+        fingerprint = rule_fingerprint(rule)
+        previous = (recent_alert(session, run.owner, fingerprint, time.time() - cooldown)
+                    if recipients and cooldown > 0 else None)
+        notification_ids = {recipient: hashlib.sha256(f'{event_id}:{recipient}'.encode()).hexdigest()[:48]
+                            for recipient in recipients}
+        if not recipients:
+            alert = {'status': 'not_requested', 'rule_key': fingerprint}
+        elif previous is not None:
+            # Keep the incident and evidence, but do not create another outbox row.
+            alert = {'status': 'suppressed', 'reason': 'cooldown', 'rule_key': fingerprint,
+                     'recipients': recipients, 'cooldown_seconds': cooldown,
+                     'last_alert_at': previous.created, 'suppressed_until': previous.created + cooldown,
+                     'notification_ids': []}
+        else:
+            alert = {'status': 'queued', 'rule_key': fingerprint, 'recipients': recipients,
+                     'cooldown_seconds': cooldown,
+                     'notification_ids': [notification_ids[recipient] for recipient in recipients]}
         event = Incident(id=event_id, owner=run.owner, run_id=run.id, payload={
             'run_id': run.id, 'source_id': run.payload['source_id'], 'source_name': run.payload['source_name'],
             'source_seconds': round(timestamp, 3), 'processed_at': time.time(), 'title': title, 'detail': detail,
             'severity': 'review' if run.payload['rule']['capability'] == 'machine_activity' else 'attention',
             'rule_version': 'v2', 'rule_name': run.payload['rule']['name'], 'frames': names,
             'detector_settings': {key: run.payload['rule'].get(key) for key in ('confidence', 'image_size', 'iou_threshold', 'analysis_fps', 'vehicle_classes')},
-            'ai_review': 'not_enabled', 'operator_status': 'suspected', 'history': []})
+            'ai_review': 'not_enabled', 'operator_status': 'suspected', 'history': [], 'alert': alert})
         session.add(event)
         if auto_review and names:
             session.add(VisionReview(id=event_id, owner=run.owner, run_id=run.id, payload=auto_review))
-        recipient = run.payload['rule'].get('recipient')
-        if recipient and recipient in RECIPIENTS:
-            # Incident and outbox commit together; deterministic ID prevents duplicate tasks.
-            session.add(Notification(id=event_id, owner=run.owner, status='pending', payload={
-                'event_id': event_id, 'recipient': recipient, 'subject': f'[Zenith] {title}',
-                'text': f"{title}\nSource: {run.payload['source_name']}\nVideo offset: {timestamp:.2f}s\nRule: {run.payload['rule']['name']}\n{detail}\nVerify the footage and follow your site response procedure.", 'attempts': 0}))
+        if alert['status'] == 'queued':
+            evidence = next((name for label, name in named if label == 'during'), names[0] if names else None)
+            text = (f"{title}\nSource: {run.payload['source_name']}\nVideo offset: {timestamp:.2f}s\n"
+                    f"Rule: {run.payload['rule']['name']}\n{detail}\n"
+                    'Verify the footage and follow your site response procedure.')
+            for recipient in recipients:
+                notification_id = notification_ids[recipient]
+                if session.get(Notification, notification_id):
+                    continue
+                session.add(Notification(id=notification_id, owner=run.owner, status='pending', payload={
+                    'event_id': event_id, 'recipient': recipient, 'subject': f'[Zenith] {title}', 'text': text,
+                    'rule_key': fingerprint, 'cooldown_seconds': cooldown,
+                    'evidence': evidence, 'attempts': 0}))
+        # Incident, alert state and every outbox row commit together.
         session.commit()
         return event_id
 
@@ -125,6 +174,17 @@ def run_findings(rule, counts, activity_seconds, event_count, coverage):
             'basis': 'rule results, not an AI reading of the full video', 'incident_count': event_count}
 
 
+def detection_classes(rule, names):
+    """Resolve checkpoint labels instead of assuming every checkpoint uses COCO IDs."""
+    labels = names if isinstance(names, dict) else dict(enumerate(names))
+    requested = ['person'] if rule['capability'] == 'zone' else rule.get('vehicle_classes', ['car', 'motorcycle', 'bus', 'truck'])
+    by_name = {name: index for index, name in labels.items()}
+    missing = [name for name in requested if name not in by_name]
+    if missing:
+        raise ValueError('The configured YOLO checkpoint does not provide required classes: ' + ', '.join(missing))
+    return [by_name[name] for name in requested]
+
+
 def analyze(run_id, token):
     with Session() as session:
         run = session.get(Run, run_id)
@@ -136,6 +196,7 @@ def analyze(run_id, token):
         if rule['capability'] != 'machine_activity':
             from ultralytics import YOLO
             model = YOLO(os.getenv('ZENITH_MODEL', 'yolov8n.pt'))
+        classes = detection_classes(rule, model.names) if model is not None else []
         fps = source.payload['fps']
         step = max(1, round(fps / rule.get('analysis_fps', 8)))
         update_run(run_id, token, analysis_settings={
@@ -184,6 +245,18 @@ def analyze(run_id, token):
             dt = timestamp - last_t if last_t is not None else 0
             if dt > 0.75:
                 frame_gaps = True
+                # Missing footage cannot establish continuous dwell or a crossing.
+                in_zone.clear()
+                previous.clear()
+                last_gray = None
+                activity_start = None
+                activity_reported = False
+                # Do not infer sustained dwell or a line crossing through unobserved time.
+                in_zone.clear()
+                previous.clear()
+                activity_start = None
+                activity_reported = False
+                last_gray = None
             scale = min(1, max(960, rule.get('image_size', 640)) / max(frame.shape[:2]))
             if scale < 1:
                 frame = cv2.resize(frame, (round(frame.shape[1]*scale), round(frame.shape[0]*scale)))
@@ -199,8 +272,6 @@ def analyze(run_id, token):
                 cv2.polylines(annotated, [polygon], True, (180, 230, 70), 2)
             signals = []
             if model is not None:
-                class_ids = {'car': 2, 'motorcycle': 3, 'bus': 5, 'truck': 7}
-                classes = [0] if rule['capability'] == 'zone' else [class_ids[name] for name in rule.get('vehicle_classes', list(class_ids))]
                 result = model.track(frame, persist=True, tracker='bytetrack.yaml', classes=classes,
                                      conf=rule.get('confidence', 0.3), iou=rule.get('iou_threshold', 0.7),
                                      verbose=False, imgsz=rule.get('image_size', 640))[0]
@@ -303,14 +374,21 @@ def deliver_notifications():
             payload = row.payload
             if payload.get('next_attempt', 0) > time.time():
                 continue
-            key = os.getenv('RESEND_API_KEY')
-            sender = payload.get('sender') or os.getenv('ZENITH_FROM_EMAIL')
-            if not key or not sender:
-                row.status = 'preview'
+            recipient = payload['recipient']
+            if recipient not in ALL_RECIPIENTS:
+                row.status = 'blocked'
                 session.commit()
                 continue
-            if payload['recipient'] not in RECIPIENTS:
-                row.status = 'blocked'
+            chat = telegram_chat(recipient)
+            key = os.getenv('RESEND_API_KEY')
+            sender = payload.get('sender') or os.getenv('ZENITH_FROM_EMAIL')
+            if chat is not None:
+                if not TELEGRAM_BOT_TOKEN:
+                    row.status = 'preview'
+                    session.commit()
+                    continue
+            elif not key or not sender:
+                row.status = 'preview'
                 session.commit()
                 continue
             attempts = payload.get('attempts', 0) + 1
@@ -318,10 +396,35 @@ def deliver_notifications():
                 row.status = 'needs_reconciliation'
                 session.commit()
                 continue
-            row.payload = {**payload, 'sender': sender, 'attempts': attempts, 'next_attempt': time.time() + 30*2**attempts}
-            # Persist attempt BEFORE network I/O; reuse stable provider idempotency key.
+            channel = 'telegram' if chat is not None else 'email'
+            row.payload = {**payload, 'channel': channel, 'attempts': attempts,
+                           'next_attempt': time.time() + 30*2**attempts, **({'sender': sender} if sender else {})}
+            # Persist the attempt BEFORE network I/O so a crash is visible as an uncertain delivery.
             row.status = 'retry'
             session.commit()
+            if chat is not None:
+                # Telegram has no idempotency key: a crash after send can duplicate one alert.
+                evidence = str(payload.get('evidence') or '')
+                path = DATA / 'evidence' / Path(evidence).name if evidence else None
+                if TELEGRAM_SEND_EVIDENCE and path is not None and path.is_file() and not payload.get('photo_rejected'):
+                    delivered, retryable, detail = telegram_send_photo(chat, path, payload['text'])
+                    if not delivered and not retryable:
+                        # A permanently rejected photo must not cost the alert; retry as text.
+                        row.payload = {**row.payload, 'photo_rejected': True, 'photo_error': detail}
+                        delivered, retryable, detail = telegram_send(chat, payload['text'])
+                        detail = f'Evidence photo rejected; text alert: {detail}'
+                else:
+                    delivered, retryable, detail = telegram_send(chat, payload['text'])
+                if delivered:
+                    row.status = 'sent'
+                    row.payload = {**row.payload, 'delivery': detail}
+                elif retryable:
+                    log.warning('Telegram outcome uncertain; will retry')
+                else:
+                    row.status = 'failed'
+                    row.payload = {**row.payload, 'error': detail}
+                session.commit()
+                continue
             try:
                 response = httpx.post('https://api.resend.com/emails', headers={'Authorization': f'Bearer {key}', 'Idempotency-Key': f'zenith-{row.id}'}, json={'from': sender, 'to': [payload['recipient']], 'subject': payload['subject'], 'text': payload['text']}, timeout=15)
                 if response.is_success:
@@ -356,7 +459,7 @@ def main():
                 deliver_notifications()
             except Exception:
                 log.exception('Notification processing failed')
-            time.sleep(2)
+            time.sleep(1)
     threading.Thread(target=notification_loop, daemon=True).start()
     while True:
         job = claim()

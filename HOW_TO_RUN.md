@@ -130,6 +130,52 @@ Get an API Catalog key at https://build.nvidia.com/ from an image-capable model'
 
 `GET /api/health` checks only that the API process responds; `GET /api/ready` checks that the configured application database and its tables are reachable (HTTP 503 if not). The Settings page separately shows database and worker state. A Supabase project URL and publishable key are **not** `DATABASE_URL`; use the private PostgreSQL connection string described above. Never place it in the browser.
 
+## Alert notifications (Telegram or email)
+
+An alert is created only when a confirmed rule observation is saved. Detection alone does not message anyone.
+
+**Telegram (recommended for phones)**
+
+1. Create a bot with **@BotFather** and copy its token. If a token is ever exposed, run `/revoke` in @BotFather and use the new one.
+2. Open your bot, press **Start**, and send it any message. A bot cannot message a chat that has never started it.
+3. Find the chat ID without printing the token:
+
+```sh
+.venv/bin/python - <<'PY'
+import os, httpx
+from dotenv import load_dotenv
+load_dotenv()
+token = os.environ['TELEGRAM_BOT_TOKEN']
+updates = httpx.get(f'https://api.telegram.org/bot{token}/getUpdates', timeout=15).json()
+print([m['message']['chat'] for m in updates.get('result', []) if 'message' in m])
+PY
+```
+
+Group chat IDs are negative (often `-100…`). Use the `id` value.
+
+4. Add both values to the backend `.env`, then restart the API and worker:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=NEW_TOKEN_FROM_BOTFATHER
+ZENITH_TELEGRAM_CHATS=123456789
+```
+
+5. In **Settings → Service readiness**, press **Send test Telegram alert**. The backend reports the bot check and each chat result.
+
+Recipients appear in Studio’s **Notification recipients** list as `Telegram · chat <id>`. Tick one or more channels per rule; the same event can go to Telegram and email together. The token never reaches the browser. Text alerts contain the event title, source name, video offset, rule name and the observation detail.
+
+Set `TELEGRAM_SEND_EVIDENCE=true` to attach one saved “during” frame with `sendPhoto`. It is off by default because the frame leaves this machine. If Telegram rejects the photo permanently, the worker falls back to the text alert and records the reason.
+
+Each rule has a **Repeat-alert cooldown** (default 300 s, set `0` to disable). Repeat observations for the same rule fingerprint inside the window do **not** create another outbox row, but the incident and evidence are still saved. The incident shows whether the alert was queued or suppressed and when the next alert is allowed. The fingerprint covers detection settings and geometry, not recipient choices. `failed` and `blocked` deliveries do not suppress later alerts.
+
+Telegram has no idempotency key, so a worker crash immediately after sending could duplicate one alert. A failed send retries with backoff and ends as `failed` (permanent rejection) or `needs_reconciliation`.
+
+**Email** uses Resend with `RESEND_API_KEY` and `ZENITH_FROM_EMAIL`, and `ZENITH_RECIPIENTS` for approved addresses. Without both keys the outbox stays in `preview`, which means **not sent**.
+
+**WhatsApp** is not implemented. The WhatsApp Business Cloud API needs a Meta business account, a dedicated number, template approval and message policy compliance; that is a separate integration, not a config switch.
+
+Alerts are not instant: a network camera records a short clip, then the worker analyses it. The base clip is `ZENITH_CAMERA_CLIP_SECONDS` (default 5 s); a zone or activity rule uses at least `dwell + 2 s` so the rule can actually fire. Expect notification delay of roughly clip length plus queue and inference time. True sub-second alerts would require in-process inference on every frame, which this app does not do.
+
 ## Portable archive
 
 To produce a package for another machine:

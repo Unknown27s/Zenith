@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Play, RotateCw } from 'lucide-react';
 import { request } from './api';
 import type { Incident, Run } from './types';
 
@@ -6,87 +7,148 @@ export function carbonLink(run: Run) {
   return `#carbon/${encodeURIComponent(run.id)}`;
 }
 
-export default function RunVideo({run, events = []}: {run: Run; events?: Incident[]}) {
+const LOAD_TIMEOUT_MS = 120_000;
+const MATCH_WINDOW = 0.18;
+
+export default function RunVideo({run, events = [], autoLoad = false}: {
+  run: Run; events?: Incident[]; autoLoad?: boolean;
+}) {
+  const wrapper = useRef<HTMLDivElement>(null);
   const player = useRef<HTMLVideoElement>(null);
   const [url, setUrl] = useState('');
-  const [attempt, setAttempt] = useState(0);
+  const [attempt, setAttempt] = useState(autoLoad ? 1 : 0);
   const [failure, setFailure] = useState('');
   const [seconds, setSeconds] = useState(0);
-  const [pendingTime, setPendingTime] = useState<number | null>(null);
-  const crossings = run.crossings ?? [];
-  const active = crossings.find(item => Math.abs(item.source_seconds - seconds) < 0.18);
-  const total = Object.values(run.counts).reduce((sum, count) => sum + count, 0);
-  const incidents = events.filter(event => event.run_id === run.id);
-  const countSoFar = crossings.filter(item => item.source_seconds <= seconds + 0.001).length;
+  const [playing, setPlaying] = useState(false);
+  const [pending, setPending] = useState<{time: number; play: boolean} | null>(null);
 
+  const counts = run.counts ?? {};
+  const crossings = run.crossings ?? [];
+  const points = run.rule.points ?? [];
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const incidents = events.filter(event => event.run_id === run.id);
+  const active = crossings.find(item => Math.abs(item.source_seconds - seconds) < MATCH_WINDOW);
+  const countSoFar = crossings.filter(item => item.source_seconds <= seconds + 0.001).length;
+  const loading = attempt > 0 && !url && !failure;
+
+  // Download the source video as a blob.
   useEffect(() => {
     if (!attempt) return;
     setFailure('');
     const controller = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, LOAD_TIMEOUT_MS);
     let asset = '';
-    request(`/sources/${run.source_id}/video`, {signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)])})
-      .then(response => response.blob())
+    request(`/sources/${run.source_id}/video`, {signal: controller.signal})
+      .then(response => {
+        if (!response.ok) throw new Error(`Could not load the video (HTTP ${response.status}).`);
+        return response.blob();
+      })
       .then(blob => {
         if (controller.signal.aborted) return;
         asset = URL.createObjectURL(blob);
         setUrl(asset);
       })
       .catch(error => {
-        if (!controller.signal.aborted) setFailure((error as Error).message);
-      });
+        if (timedOut) setFailure('Loading the video timed out. Please try again.');
+        else if (!controller.signal.aborted) setFailure((error as Error).message || 'Could not load the video.');
+      })
+      .finally(() => window.clearTimeout(timer));
     return () => {
+      window.clearTimeout(timer);
       controller.abort();
       if (asset) URL.revokeObjectURL(asset);
+      setUrl('');
+      setPlaying(false);
+      setSeconds(0);
     };
   }, [attempt, run.source_id]);
 
-  function jump(time: number) {
-    if (!attempt || failure) setAttempt(previous => previous + 1);
-    if (player.current?.readyState) {
-      player.current.pause();
-      player.current.currentTime = time;
+  // Smooth overlay updates while playing (timeupdate only fires ~4x per second).
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0;
+    const tick = () => {
+      if (player.current) setSeconds(player.current.currentTime);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing]);
+
+  function load() {
+    setAttempt(previous => previous + 1);
+  }
+
+  function jump(time: number | undefined) {
+    if (time === undefined || Number.isNaN(time)) return;
+    wrapper.current?.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+    const video = player.current;
+    if (video?.readyState) {
+      video.currentTime = time;
       setSeconds(time);
+      void video.play().catch(() => undefined);
     } else {
-      setPendingTime(time);
+      setPending({time, play: true});
+      if (!attempt || failure) load();
     }
   }
 
-  return <div className="run-video">
+  const overlayReady = (run.rule.capability === 'traffic' ? points.length >= 2 : points.length >= 3);
+
+  return <div className="run-video" ref={wrapper}>
     {url ? <div className="run-video-player">
-      <video ref={player} src={url} controls playsInline aria-label={run.source_name}
-        onTimeUpdate={event => setSeconds(event.currentTarget.currentTime)}
+      <video ref={player} src={url} controls playsInline preload="metadata" aria-label={run.source_name}
+        onTimeUpdate={event => { if (!playing) setSeconds(event.currentTarget.currentTime); }}
+        onPlay={() => setPlaying(true)}
+        onPause={event => { setPlaying(false); setSeconds(event.currentTarget.currentTime); }}
+        onEnded={() => setPlaying(false)}
+        onSeeked={event => setSeconds(event.currentTarget.currentTime)}
         onLoadedMetadata={event => {
-          if (pendingTime !== null) {
-            event.currentTarget.currentTime = pendingTime;
-            setSeconds(pendingTime);
-            setPendingTime(null);
-          }
+          if (!pending) return;
+          event.currentTarget.currentTime = pending.time;
+          setSeconds(pending.time);
+          if (pending.play) void event.currentTarget.play().catch(() => undefined);
+          setPending(null);
         }}/>
-      <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
+      {overlayReady && <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
         {run.rule.capability === 'traffic'
-          ? <line x1={run.rule.points[0][0] * 1000} y1={run.rule.points[0][1] * 1000}
-                  x2={run.rule.points[1][0] * 1000} y2={run.rule.points[1][1] * 1000}/>
-          : <polygon points={run.rule.points.map(([x,y]) => `${x * 1000},${y * 1000}`).join(' ')}/>}
+          ? <line x1={points[0][0] * 1000} y1={points[0][1] * 1000}
+                  x2={points[1][0] * 1000} y2={points[1][1] * 1000}/>
+          : <polygon points={points.map(([x, y]) => `${x * 1000},${y * 1000}`).join(' ')}/>}
         {active && <rect x={active.box[0] * 1000} y={active.box[1] * 1000}
           width={(active.box[2] - active.box[0]) * 1000} height={(active.box[3] - active.box[1]) * 1000}/>}
-      </svg>
-    </div> : <button className="button secondary" type="button" disabled={attempt > 0 && !failure}
-      onClick={() => setAttempt(previous => previous + 1)}>{attempt > 0 && !failure ? 'Loading source video…' : 'Load source video'}</button>}
-    {failure && <p role="alert">{failure}</p>}
-    {run.rule.capability === 'traffic' && <p>
-      <strong>{total} crossings</strong> · {Object.entries(run.counts).map(([name, count]) => `${name} ${count}`).join(' · ')}
-      {url && crossings.length > 0 && <> · {countSoFar} at playback position{active && <> · {active.vehicle_class} #{active.track_id}</>}</>}
-    </p>}
-    {crossings.length > 0 && <div className="run-video-markers" aria-label="Crossing timestamps">
-      {crossings.map(item => <button key={item.track_id} type="button" className="button secondary" onClick={() => jump(item.source_seconds)}>
+      </svg>}
+    </div> : <button className="button secondary run-video-load" type="button" disabled={loading} onClick={load}>
+      {failure ? <RotateCw size={15}/> : <Play size={15}/>}
+      {loading ? 'Loading source video…' : failure ? 'Retry loading video' : 'Load source video'}
+    </button>}
+
+    {failure && <p role="alert" className="error-text">{failure}</p>}
+
+    {run.rule.capability === 'traffic' && <div className="run-video-summary">
+      <strong>{total} crossings</strong>
+      <span>{Object.entries(counts).map(([name, count]) => `${name} ${count}`).join(' · ') || 'No vehicles counted'}</span>
+      {url && crossings.length > 0 && <span className="run-video-live">
+        {countSoFar} so far{active && <> · {active.vehicle_class} #{active.track_id}</>}
+      </span>}
+    </div>}
+
+    {crossings.length > 0 && <div className="run-video-markers" role="group" aria-label="Crossing timestamps">
+      {crossings.map((item, index) => <button key={`${item.track_id}-${index}`} type="button"
+        className={`button secondary${item === active ? ' current' : ''}`}
+        aria-current={item === active ? 'true' : undefined}
+        onClick={() => jump(item.source_seconds)}>
         {item.source_seconds.toFixed(2)}s · {item.vehicle_class} #{item.track_id} · {item.direction}
       </button>)}
     </div>}
     {run.rule.capability === 'traffic' && total > crossings.length &&
       <p className="small-note">Timestamps are available for {crossings.length} of {total} crossings in this run.</p>}
-    {incidents.length > 0 && <div className="run-video-markers" aria-label="Incident timestamps">
-      {incidents.map(item => <button key={item.id} type="button" className="button secondary" onClick={() => jump(item.source_seconds)}>
-        {item.source_seconds.toFixed(2)}s · {item.title}
+
+    {incidents.length > 0 && <div className="run-video-markers" role="group" aria-label="Incident timestamps">
+      {incidents.map(item => <button key={item.id} type="button" className="button secondary"
+        onClick={() => jump(item.source_seconds)}>
+        {item.source_seconds?.toFixed(2) ?? '0.00'}s · {item.title}
       </button>)}
     </div>}
   </div>;

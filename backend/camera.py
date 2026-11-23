@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
-from .config import DATA, MAX_DURATION, MAX_UPLOAD, STORAGE_LIMIT
+from .config import CLIP_SECONDS, DATA, MAX_DURATION, MAX_UPLOAD, STORAGE_LIMIT
 from .db import Run, Session, Source
 
 log = logging.getLogger('zenith.camera')
@@ -17,6 +17,13 @@ _lock = threading.Lock()
 _stop = threading.Event()
 _thread = None
 _state = {'state': 'stopped', 'last_clip_at': None, 'owner': None}
+
+
+def clip_seconds(rule):
+    """Short clips cut delay, but a zone rule must see its full dwell plus a margin."""
+    if rule.get('capability') == 'traffic':
+        return CLIP_SECONDS
+    return max(CLIP_SECONDS, min(float(MAX_DURATION), float(rule.get('dwell_seconds', 2)) + 2))
 
 
 def source_url():
@@ -43,6 +50,7 @@ def status(owner=None):
                     'last_clip_at': None, 'mode': 'bounded network clips; not real-time alerts'}
         return {'configured': configured(), 'state': _state['state'],
                 'last_clip_at': _state['last_clip_at'], 'protocol': 'HLS' if source_url().startswith('https://') else 'RTSP',
+                'clip_seconds': CLIP_SECONDS,
                 'mode': 'bounded network clips; not real-time alerts'}
 
 
@@ -79,7 +87,7 @@ def _capture(owner, rule):
 
     url = source_url()
     protocol = 'HLS' if url.startswith('https://') else 'RTSP'
-    seconds = min(MAX_DURATION, 12)
+    seconds = clip_seconds(rule)
     try:
         while not _stop.is_set():
             with Session() as session:

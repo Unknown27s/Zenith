@@ -17,10 +17,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, text
 
-from .config import DATA, MAX_DURATION, MAX_UPLOAD, RECIPIENTS, STORAGE_LIMIT, TOKEN
+from .config import ALL_RECIPIENTS, DATA, MAX_DURATION, MAX_UPLOAD, STORAGE_LIMIT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, TELEGRAM_SEND_EVIDENCE, TOKEN
 from .db import Carbon, EmissionFactor, Equipment, Incident, Notification, OperatorKey, Run, RunSummary, Session, Source, VisionReview, engine, init_db, serialize
 from .schemas import Action, CameraRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, ProposalRequest, RunRequest, VisionReviewRequest
 from . import camera, vision
+from .alerts import telegram_probe, telegram_send
 
 log = logging.getLogger('zenith')
 logging.basicConfig(level=logging.INFO)
@@ -155,7 +156,9 @@ def status(identity=Depends(owner)):
             'storage_used_mb': round(used / 1024**2, 1), 'storage_limit_mb': STORAGE_LIMIT // 1024**2,
             'worker_online': age is not None and age < 45, 'worker_age_seconds': age,
             'email_mode': 'configured' if os.getenv('RESEND_API_KEY') and os.getenv('ZENITH_FROM_EMAIL') else 'preview',
-            'ai_review': vision_status['provider'], 'vision': vision_status, 'recipients': RECIPIENTS, 'max_upload_mb': MAX_UPLOAD // (1024*1024),
+            'channels': {'email': 'configured' if os.getenv('RESEND_API_KEY') and os.getenv('ZENITH_FROM_EMAIL') else 'preview',
+                         'telegram': {'configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS), 'chats': len(TELEGRAM_CHAT_IDS), 'evidence': TELEGRAM_SEND_EVIDENCE}},
+            'ai_review': vision_status['provider'], 'vision': vision_status, 'recipients': ALL_RECIPIENTS, 'max_upload_mb': MAX_UPLOAD // (1024*1024),
             'max_video_seconds': MAX_DURATION, 'deployment': 'laptop operator-key workspaces',
             'capabilities': ['zone', 'traffic', 'machine_activity']}
 
@@ -196,10 +199,16 @@ def vision_status(identity=Depends(owner)):
     return vision.probe()
 
 
+def check_recipients(rule):
+    """Reject any recipient the backend was not configured to contact."""
+    unknown = [recipient for recipient in rule.recipients if recipient not in ALL_RECIPIENTS]
+    if unknown:
+        raise HTTPException(400, 'One or more recipients are not configured on this backend')
+
+
 @app.post('/api/cameras/rtsp/start', status_code=202)
 def start_rtsp(body: CameraRequest, identity=Depends(owner)):
-    if body.rule.recipient and body.rule.recipient not in RECIPIENTS:
-        raise HTTPException(400, 'Recipient is not configured')
+    check_recipients(body.rule)
     heartbeat = DATA / 'worker.heartbeat'
     if not heartbeat.exists() or time.time() - heartbeat.stat().st_mtime > 45:
         raise HTTPException(409, 'Start the analysis worker before starting a camera')
@@ -360,8 +369,7 @@ def propose(body: ProposalRequest, identity=Depends(owner)):
 
 @app.post('/api/runs', status_code=202)
 def create_run(body: RunRequest, identity=Depends(owner)):
-    if body.rule.recipient and body.rule.recipient not in RECIPIENTS:
-        raise HTTPException(400, 'Recipient is not configured')
+    check_recipients(body.rule)
     approval = None
     if body.vision_provider:
         try:
@@ -501,6 +509,32 @@ def evidence(event_id: str, frame_id: str, identity=Depends(owner)):
 def notifications(identity=Depends(owner)):
     with Session() as session:
         return [serialize(x) for x in session.scalars(select(Notification).where(Notification.owner == identity).order_by(Notification.created.desc()).limit(100))]
+
+
+_last_alert_test = 0.0
+
+
+@app.post('/api/notifications/test')
+def test_alert(identity=Depends(administrator)):
+    """Send one explicit setup check to each allowlisted Telegram chat. Never returns the bot token."""
+    global _last_alert_test
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
+        raise HTTPException(409, 'Telegram is not configured. Set TELEGRAM_BOT_TOKEN and ZENITH_TELEGRAM_CHATS on the backend, then restart it.')
+    if time.time() - _last_alert_test < 10:
+        raise HTTPException(429, 'Wait a few seconds before sending another test alert')
+    _last_alert_test = time.time()
+    bot_ok, bot_detail = telegram_probe()
+    if not bot_ok:
+        return {'bot': bot_detail, 'results': []}
+    text = ('Zenith test alert\n'
+            'Telegram delivery is configured. No incident occurred: this is a setup check.\n'
+            'Keep this chat private; alerts can contain site and footage details.')
+    results = []
+    for chat in TELEGRAM_CHAT_IDS:
+        delivered, retryable, detail = telegram_send(chat, text)
+        results.append({'chat': chat, 'delivered': delivered, 'detail': detail,
+                        **({'retryable': True} if retryable else {})})
+    return {'bot': bot_detail, 'results': results}
 
 
 def carbon_values(body, session, identity):

@@ -20,13 +20,37 @@ class Rule(StrictModel):
     iou_threshold: float = Field(default=0.7, ge=0.1, le=0.9)
     analysis_fps: int = Field(default=8, ge=4, le=15)
     vehicle_classes: list[Literal['car', 'motorcycle', 'bus', 'truck']] = Field(default_factory=lambda: ['car', 'motorcycle', 'bus', 'truck'], min_length=1, max_length=4)
+    # Multi-channel per rule: any mix of allowlisted email addresses and `telegram:<chat>` entries.
+    recipients: list[str] = Field(default_factory=list, max_length=5)
+    # Legacy single-recipient field, kept so older clients still work.
     recipient: str = Field(default='', max_length=254)
+    # Suppress repeat alerts for the same rule fingerprint for this many seconds.
+    alert_cooldown_seconds: float = Field(default=300, ge=0, le=86400)
     confirmed: Literal[True]
+
+    @field_validator('recipients')
+    @classmethod
+    def clean_recipients(cls, value):
+        cleaned = []
+        for item in value:
+            item = item.strip()
+            if not item:
+                raise ValueError('Recipients must not be blank')
+            if len(item) > 254:
+                raise ValueError('Recipient is too long')
+            if item not in cleaned:
+                cleaned.append(item)
+        return cleaned
 
     @model_validator(mode='after')
     def geometry(self):
         if len(set(self.vehicle_classes)) != len(self.vehicle_classes):
             raise ValueError('Vehicle classes must not repeat')
+        legacy = self.recipient.strip()
+        if legacy and legacy not in self.recipients:
+            self.recipients = [*self.recipients, legacy]
+        if len(self.recipients) > 5:
+            raise ValueError('At most five notification recipients per rule')
         if any(not math.isfinite(v) or v < 0 or v > 1 for p in self.points for v in p):
             raise ValueError('Geometry must use normalized coordinates between 0 and 1')
         if self.capability == 'traffic':
