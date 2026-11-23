@@ -32,7 +32,8 @@ Temporary screenshots: `/tmp/opencode/zenith-overview.png`, `/tmp/opencode/zenit
 ## Not established
 - Detector/tracker accuracy, positive/negative alert outcomes or equipment-proxy accuracy: no representative user footage was supplied.
 - Actual email sending/delivery: no credentials or approved destination supplied; no email was sent.
-- Gemini/vision-agent review, collapse/pose, PPE, crowd/exit obstruction, live camera connectors, escalation, retention automation and multi-tenant SaaS auth: not implemented.
+- Collapse/pose, PPE, crowd/exit obstruction, live camera connectors, escalation, retention automation and multi-tenant SaaS auth: not implemented.
+- Incident evidence review supports hosted NVIDIA or a local OpenAI-compatible VLM. See [VISION_API.md](VISION_API.md).
 - Persistent Colab availability, Colab GPU compatibility, ngrok account policy eligibility and deployed Docker Compose operation: not established.
 - This is a first implementation, not a completed/validated production safety or emissions-monitoring service.
 

@@ -1,19 +1,25 @@
-# Vision model API keys
+# Vision evidence review
 
-## Current application
-YOLOv8 detection and ByteTrack run locally and need **no API key**. The current plain-English parser is local and constrained. Hosted vision-language review is not wired into this build; setting a provider key alone does not enable it.
+YOLOv8 + ByteTrack and the configured rules generate incident records. The optional vision model adds a text interpretation of saved evidence frames. It has no authority over detections, counts, notifications or operator decisions.
 
-## NVIDIA is an option
-NVIDIA's API Catalog offers image/video-capable models that can provide an optional preview interpretation or evidence-review layer above the local detectors. They do not replace timestamp-based tracking/dwell rules or human confirmation.
+Set the variables in the backend environment or the corresponding notebook settings. Restart the API and worker together after changing the provider.
 
-Catalog/model references checked:
-- https://build.nvidia.com/explore/vision
-- https://build.nvidia.com/nvidia/nemotron-nano-12b-v2-vl (text/image/video capable; candidate to evaluate, not established accurate for this CCTV use case)
-- https://build.nvidia.com/meta/llama-3.2-90b-vision-instruct (image/text)
-- https://docs.nvidia.com/nim/nvclip/latest/getting-started.html (API Catalog key creation)
+| Variable | Default / purpose |
+|---|---|
+| `VISION_PROVIDER` | `off`, `nvidia`, or `local` |
+| `NVIDIA_API_KEY` | Server-only NVIDIA API Catalog credential |
+| `NVIDIA_VISION_MODEL` | `nvidia/nemotron-nano-12b-v2-vl` |
+| `VISION_SEND_TO_THIRD_PARTY` | `false`. NVIDIA additionally requires explicit operator consent per incident or run. |
+| `LOCAL_VLM_BASE_URL` | `http://127.0.0.1:11434/v1`. Use loopback HTTP or a trusted private HTTPS endpoint. |
+| `LOCAL_VLM_MODEL` | `qwen2.5vl:3b` |
+| `LOCAL_VLM_API_KEY` | Optional bearer token for an authenticated compatible local provider |
+| `VISION_TIMEOUT` | 30 seconds. Supported range 1–90. |
+| `VISION_MAX_FRAMES` | 1 per review, with the during frame preferred. Increase to 2 or 3 for a provider/model that supports multiple images. |
 
-Sign in at https://build.nvidia.com/, open a supported vision model, then select **Get API Key → Generate Key**. Existing NVIDIA API Catalog keys can be used if their permissions, quota and model access allow it. An NGC registry/container-download key is not automatically equivalent to a hosted inference key. Use the model page's current API example and model ID; not every model supports the same endpoint, number of images or structured-output features.
+Use **Check model connection** in Settings to query the provider's model list. This sends no images and exercises no chat completions. An HTTP response alone does not confirm model access: the check distinguishes a reachable endpoint from a listed model. Exact model access and image capabilities can vary. The [NVIDIA API reference](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-nano-12b-v2-vl-infer) documents the default hosted model. See [Ollama's model page](https://ollama.com/library/qwen2.5vl) for the default local model.
 
-For a future backend integration, keep the key privately in the backend `.env` as `NVIDIA_API_KEY`. Never put it in a `VITE_` variable, browser settings, screenshots, chat or source control. A key is a credential, not a model selection. Choose the image-capable model separately. The NVIDIA vision card above does not advertise native structured output; application-side validation and bounded failure handling would be required.
+Opt in from **Monitoring studio** to queue reviews for up to the first three incidents a run generates. The worker processes reviews after analysis when it is free. From **Incidents & evidence**, request or rerun review for a single incident. Provider failures leave the original evidence and decision history available. The worker makes one completion request per review, validates the result against a strict JSON schema, and saves its result or failure to the incident's review record. It does not retry inference automatically.
 
-Key validity/access has **not** been checked with an external API request. No NVIDIA/NGC/Gemini key was present in the project's loaded environment at the time of review. No images were sent to NVIDIA. Before integration, obtain permission to send CCTV evidence to that provider and review its applicable data/privacy/usage terms.
+Each completed run also saves a deterministic **analysis summary** from its measured rule outputs, even with hosted vision disabled. With an explicitly approved provider and per-run consent, the worker separately queues one optional AI summary of bounded sampled source stills and the saved rule results. Find both in **Video findings**. Neither is a full-frame audit or an instruction to take autonomous action. Without NVIDIA sharing permission, no video frames are sent off the backend.
+
+Authenticated routes are `GET /api/vision/status`, `GET /api/events/{event_id}/review` and `POST /api/events/{event_id}/review`. The POST body accepts `provider` and `consent`. The existing event list includes the latest review so the dashboard can update through its existing polling.

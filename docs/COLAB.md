@@ -1,26 +1,29 @@
-# Optional Google Colab backend
+# Run Zenith on Google Colab
 
-**Primary deployment: your laptop.** Colab is an interactive notebook service, not persistent hosting. The included notebook runs the same API, SQLite database and worker. It also contains an optional pyngrok HTTPS tunnel for a runtime/provider plan where that use is permitted.
+The notebook can run FastAPI, SQLite, the file-analysis worker and the same dashboard from one bundle. For the hybrid demo, use Colab for YOLOv8 + ByteTrack and optionally send approved incident stills to NVIDIA for interpretation. Start with vision off to verify the workflow without hosted inference or a local VLM download.
 
-## Policy and availability
-- Read https://research.google.com/colaboratory/faq.html before enabling a tunnel. Free managed runtimes restrict bypassing the notebook UI to interact primarily through a web UI. Unrelated web hosting is prohibited on managed runtimes. A paid plan is not blanket permission for SaaS hosting.
-- Do not use keepalive tricks, circumvent runtime limits, or assume GPU availability. Use the notebook directly for interactive compute, or your laptop for the dashboard demo.
-- The VM, SQLite data, uploads, evidence and model downloads may disappear on reset. Use consenting demonstration footage, not private customer footage. Do not expose the operator key in shared saved notebook output.
-- There is no guaranteed uptime or fixed URL. Reconnect in Settings after the runtime/tunnel changes. Stop the tunnel and subprocesses when finished.
+## Prepare the bundle
 
-## Setup
-1. Locally run `python scripts/package_colab.py` to create `artifacts/zenith-colab.zip`. This includes backend code only, not `.env`, keys, media or dependencies.
-2. Upload `notebooks/Zenith_Colab.ipynb` to Colab. Select an appropriate runtime; GPU is optional.
-3. Run the upload/install cells and upload `zenith-colab.zip` when prompted.
-4. Launch the backend. The notebook generates a random operator key. Notebook-native upload/analysis is possible through the included direct API cell.
-5. Only if permitted for your environment, enable the optional tunnel cell. Enter your ngrok auth token privately. Set `FRONTEND_ORIGIN` to the exact website origin (local default: `http://127.0.0.1:5173`) **before** starting the API.
-6. In the laptop website's Connection & Settings, enter the HTTPS tunnel origin and notebook operator key. Do not append `/api`.
-7. Run the cleanup cell when finished. Free ngrok request/transfer/account limits also apply.
+Run `npm ci` and `python scripts/package_colab.py` from the repo. The script builds the dashboard and writes `artifacts/zenith-colab.zip` with the backend, static site and licensed demo clips. It excludes credentials, operator data, model weights and installed dependencies.
 
-The notebook defaults to preview-only email. Configure approved recipients and Resend in the runtime environment before starting if actual delivery is intended. External services receive footage/data only when explicitly integrated; Gemini review is not implemented in this version.
+## Start the demo
 
-## GitHub references checked
-- Upstream pyngrok FastAPI and Colab integration patterns: https://github.com/alexdlaird/pyngrok/blob/develop/docs/integrations.rst
-- Existing community example located: https://github.com/tonezzz/fastapi_colab (repository has no declared license; no code copied).
+1. Open `notebooks/Zenith_Colab.ipynb` in Colab. Select a GPU runtime if available.
+2. In Colab Secrets, add a random `ZENITH_API_KEY` of at least 24 characters and enable notebook access. Keep the value available to enter in the dashboard. Add `NGROK_AUTHTOKEN` only if you will enable the tunnel.
+3. Run step 1 and upload `zenith-colab.zip`. Run step 2 to start the API and worker. When tunneling is permitted, set `ENABLE_PUBLIC_TUNNEL = True` in step 2 before running the cell.
+4. Open **Open the Zenith dashboard** from the notebook output, continue through the ngrok browser prompt if shown, and enter the operator key in **Connection & settings**. Leave **API origin** blank on this dashboard.
+5. To use a separate Vercel or laptop frontend, set `FRONTEND_ORIGIN` to its exact origin before launching the backend. In that frontend's Settings, enter the printed HTTPS tunnel origin without `/api`, plus the operator key. Deploy the updated frontend code to get the new vision controls on Vercel.
+6. Open **Demo footage → Run automatic demo** to analyze the three bundled clips and see carbon previews. For your own clips, choose a zone or line and confirm the rule before running analysis. When finished, run the cleanup cell. Export any reports you need first.
 
-Our notebook is an independent launcher for Zenith, not a copied third-party application. A tunnel URL is only transport: every private API request still needs the operator bearer key.
+Read the [Colab FAQ](https://research.google.com/colaboratory/faq.html) before enabling a tunnel. Free managed runtimes restrict primarily using a separate web UI. Use the notebook-native cells for interactive processing when the tunnel is unsuitable, or run the laptop deployment for dashboard access. Colab resets can remove the database, evidence, and model downloads. A restart can change the tunnel URL. Use a fresh connection when needed.
+
+## Vision settings
+
+| Provider | Notebook settings |
+|---|---|
+| YOLO only | `VISION_PROVIDER = 'off'` |
+| NVIDIA hosted | Add `NVIDIA_API_KEY` to Colab Secrets. Set `VISION_PROVIDER = 'nvidia'` and `ALLOW_NVIDIA_FRAME_SHARING = True` if approved for your footage. The operator still opts in before each incident review or run. |
+| Local on Colab | Set `VISION_PROVIDER = 'local'` and `START_OLLAMA = True`. The default model is `qwen2.5vl:3b`, a 3.2 GB download. The notebook starts Ollama on loopback and processes vision jobs after file analysis. |
+| Local on a separate machine | Set `VISION_PROVIDER = 'local'`, keep `START_OLLAMA = False`, and configure a private HTTPS model endpoint reachable from Colab. Add `LOCAL_VLM_API_KEY` if it requires bearer auth. |
+
+For a Colab backend, `127.0.0.1` refers to the Colab VM. Use same-VM Ollama for the simplest local-provider demo. On the Lenovo B490 with 4 GB RAM, prefer using the laptop as the frontend. If you use a different laptop for local VLM inference, run the Zenith backend and Ollama on that laptop unless you already have private connectivity from Colab.

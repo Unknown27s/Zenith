@@ -1,7 +1,7 @@
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -54,6 +54,16 @@ class Rule(StrictModel):
 class RunRequest(StrictModel):
     source_id: str = Field(max_length=64)
     rule: Rule
+    vision_provider: Literal['nvidia', 'local'] | None = None
+    vision_consent: StrictBool = False
+
+
+class CameraRequest(StrictModel):
+    rule: Rule
+
+
+class OperatorKeyRequest(StrictModel):
+    label: str = Field(min_length=2, max_length=80, pattern=r'\S')
 
 
 class ProposalRequest(StrictModel):
@@ -63,6 +73,11 @@ class ProposalRequest(StrictModel):
 class Action(StrictModel):
     action: Literal['acknowledged', 'confirmed', 'dismissed']
     note: str = Field(default='', max_length=1000)
+
+
+class CrossingReviewRequest(StrictModel):
+    action: Literal['valid', 'false_positive']
+    note: str = Field(min_length=3, max_length=500)
 
 
 class EquipmentRequest(StrictModel):
@@ -80,6 +95,7 @@ class CarbonRequest(StrictModel):
     quantity: float = Field(ge=0, le=1e12)
     factor: float = Field(gt=0, le=1e9)
     factor_source: str = Field(min_length=3, max_length=1000)
+    factor_id: str | None = Field(default=None, max_length=64)
     basis: str = Field(min_length=3, max_length=1000)
     hours: float = Field(default=1, ge=0, le=1e7)
     load_fraction: float = Field(default=1, gt=0, le=1)
@@ -87,6 +103,13 @@ class CarbonRequest(StrictModel):
     run_id: str | None = Field(default=None, max_length=64)
     vehicle_class: Literal['car', 'motorcycle', 'bus', 'truck'] | None = None
     accept_activity_proxy: bool = False
+    metered_kwh: float | None = Field(default=None, ge=0, le=1e12)
+
+    @model_validator(mode='after')
+    def validate_meter(self):
+        if self.metered_kwh is not None and (self.kind != 'electricity' or self.accept_activity_proxy):
+            raise ValueError('Metered kWh requires electricity and cannot be combined with the motion proxy')
+        return self
 
     @field_validator('name', 'factor_source', 'basis')
     @classmethod
@@ -94,3 +117,32 @@ class CarbonRequest(StrictModel):
         if not value.strip():
             raise ValueError('Cannot be blank')
         return value.strip()
+
+
+
+class VisionReviewRequest(StrictModel):
+    provider: Literal['nvidia', 'local']
+    consent: StrictBool = False
+
+
+class VisionInterpretation(StrictModel):
+    model_config = ConfigDict(strict=True)
+
+    summary: str = Field(min_length=1, max_length=600, pattern=r'\S')
+    limitations: str = Field(min_length=1, max_length=400, pattern=r'\S')
+
+
+class EmissionFactorRequest(StrictModel):
+    name: str = Field(min_length=2, max_length=100, pattern=r'\S')
+    kind: Literal['electricity', 'fuel', 'traffic']
+    factor: float = Field(gt=0, le=1e9)
+    source: str = Field(min_length=3, max_length=1000, pattern=r'\S')
+    region: str = Field(min_length=2, max_length=100, pattern=r'\S')
+    year: int = Field(ge=1900, le=2100)
+    vehicle_class: Literal['car', 'motorcycle', 'bus', 'truck'] | None = None
+
+    @model_validator(mode='after')
+    def valid_class(self):
+        if (self.kind == 'traffic') != (self.vehicle_class is not None):
+            raise ValueError('Traffic factors require a vehicle class; other factors must not have one')
+        return self

@@ -11,4 +11,5 @@ __pycache__/
 data/
 *.pt
 *.log
+*zenith-backup*.zip
 .ipynb_checkpoints/

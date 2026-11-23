@@ -12,8 +12,9 @@ import httpx
 import numpy as np
 from sqlalchemy import or_, select, update
 
-from .config import DATA, RECIPIENTS
-from .db import Incident, Notification, Run, Session, Source, init_db
+from .config import DATA, RECIPIENTS, VISION_AUTO_LIMIT
+from .db import Incident, Notification, Run, Session, Source, VisionReview, init_db
+from .vision import process_one_review, process_one_summary
 
 log = logging.getLogger('zenith.worker')
 logging.basicConfig(level=logging.INFO)
@@ -56,7 +57,7 @@ def update_run(run_id, token, **changes):
         session.commit()
 
 
-def save_incident(run, token, frame_index, timestamp, title, detail, frames):
+def save_incident(run, token, frame_index, timestamp, title, detail, frames, auto_review):
     event_id = hashlib.sha256(f'{run.id}:{frame_index}:{title}:{detail}'.encode()).hexdigest()[:40]
     with Session() as session:
         current = session.get(Run, run.id)
@@ -77,6 +78,8 @@ def save_incident(run, token, frame_index, timestamp, title, detail, frames):
             'detector_settings': {key: run.payload['rule'].get(key) for key in ('confidence', 'image_size', 'iou_threshold', 'analysis_fps', 'vehicle_classes')},
             'ai_review': 'not_enabled', 'operator_status': 'suspected', 'history': []})
         session.add(event)
+        if auto_review and names:
+            session.add(VisionReview(id=event_id, owner=run.owner, run_id=run.id, payload=auto_review))
         recipient = run.payload['rule'].get('recipient')
         if recipient and recipient in RECIPIENTS:
             # Incident and outbox commit together; deterministic ID prevents duplicate tasks.
@@ -102,6 +105,24 @@ def crossed(a, b, c, d):
     def orientation(p, q, r):
         return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
     return orientation(c, d, a)*orientation(c, d, b) < 0 and orientation(a, b, c)*orientation(a, b, d) <= 0
+
+
+def run_findings(rule, counts, activity_seconds, event_count, coverage):
+    """Always-available, source-bound summary; no invented model observations."""
+    capability = rule['capability']
+    if capability == 'traffic':
+        breakdown = ', '.join(f'{name}: {count}' for name, count in counts.items() if count)
+        total = sum(counts.values())
+        result = f'{total} tracked vehicle crossing(s) at the configured line.'
+        if breakdown:
+            result += f' Classes: {breakdown}.'
+    elif capability == 'zone':
+        result = f'{event_count} suspected zone-dwell observation(s) at the configured region.'
+    else:
+        result = (f'{activity_seconds:.2f} seconds of detected visible motion in the configured region; '
+                  f'{event_count} motion observation(s). This is not an electrical ON/OFF measurement.')
+    return {'summary': result, 'limitations': f'{coverage}. Review source footage and geometry; detections are not verified.',
+            'basis': 'rule results, not an AI reading of the full video', 'incident_count': event_count}
 
 
 def analyze(run_id, token):
@@ -133,6 +154,7 @@ def analyze(run_id, token):
         counted = set()
         counts = {name: 0 for name in ('car', 'motorcycle', 'bus', 'truck')}
         directions = {'A→B': 0, 'B→A': 0}
+        crossings = []
         history = deque(maxlen=18)
         pending_after = []
         activity_start = None
@@ -206,7 +228,14 @@ def analyze(run_id, token):
                             if prev and track_id not in counted and timestamp-prev[1] < 0.75 and crossed(prev[0], foot, points[0], points[1]):
                                 counts[label] += 1
                                 side = (points[1][0]-points[0][0])*(foot[1]-points[0][1])-(points[1][1]-points[0][1])*(foot[0]-points[0][0])
-                                directions['A→B' if side > 0 else 'B→A'] += 1
+                                direction = 'A→B' if side > 0 else 'B→A'
+                                directions[direction] += 1
+                                if len(crossings) < 1000:
+                                    crossings.append({
+                                        'source_seconds': round(timestamp, 3), 'track_id': track_id,
+                                        'vehicle_class': label, 'direction': direction,
+                                        'box': [x1 / width, y1 / height, x2 / width, y2 / height],
+                                    })
                                 counted.add(track_id)
                             previous[track_id] = (foot, timestamp)
                 in_zone = {k:v for k,v in in_zone.items() if k in active}
@@ -242,7 +271,8 @@ def analyze(run_id, token):
                     raise ValueError('Incident limit reached; shorten the clip or tune the rule. Coverage is incomplete.')
                 before = next((image for t, image in reversed(history) if t <= timestamp-1), None)
                 frames = ([('before', before)] if before is not None else []) + [('during', annotated)]
-                event_id = save_incident(run, token, frame_index, timestamp, title, detail, frames)
+                event_id = save_incident(run, token, frame_index, timestamp, title, detail, frames,
+                                         run.payload.get('vision_authorization') if event_count < VISION_AUTO_LIMIT else None)
                 pending_after.append((event_id, timestamp+1))
                 event_count += 1
             history.append((timestamp, annotated.copy()))
@@ -255,11 +285,13 @@ def analyze(run_id, token):
         if last_t < source.payload['duration'] - max(1, 2*step/fps):
             raise ValueError('Video decode ended before expected duration; coverage incomplete')
         # Do not manufacture an after frame if the source ended before it existed.
+        coverage = 'partial: source frame gaps' if frame_gaps else 'sampled file coverage; detector accuracy unvalidated'
         update_run(run_id, token, status='completed', progress=100, stage='Analysis complete', counts=counts, directions=directions,
-                   activity_seconds=round(activity_seconds,3), source_seconds=last_t,
-                   coverage='partial: source frame gaps' if frame_gaps else 'sampled file coverage; detector accuracy unvalidated',
+                    activity_seconds=round(activity_seconds,3), source_seconds=last_t,
+                    coverage=coverage, findings=run_findings(rule, counts, activity_seconds, event_count, coverage),
                    timestamp_basis='frame index / metadata FPS fallback (re-encode variable-rate sources)' if timestamp_fallback else 'decoded source timestamps',
-                   analysis_fps=round(fps/step,2), completed_at=time.time())
+                   analysis_fps=round(fps/step,2), completed_at=time.time(),
+                   **({'crossings': crossings} if rule['capability'] == 'traffic' else {}))
     finally:
         cap.release()
 
@@ -341,6 +373,12 @@ def main():
                     log.exception('Could not persist failure')
             finally:
                 current.update(run_id=None, token=None)
+        else:
+            try:
+                process_one_review()
+                process_one_summary()
+            except Exception:
+                log.exception('Vision review queue processing failed')
         time.sleep(1)
 
 
