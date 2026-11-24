@@ -164,7 +164,8 @@ def _run(runtime, url):
             with _inference_lock:
                 if stop_event.is_set():
                     break
-                result = model.predict(image, classes=[0, 2, 3, 5, 7], conf=.3, imgsz=416, verbose=False)[0]
+                # Show all checkpoint categories; rule analysis still filters its required classes.
+                result = model.predict(image, device='cpu', conf=.3, imgsz=416, verbose=False)[0]
                 annotated = result.plot()
             ok, encoded = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if not ok:

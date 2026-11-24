@@ -285,6 +285,7 @@ def analyze(run_id, token):
             signals = []
             if model is not None:
                 result = model.track(frame, persist=True, tracker='bytetrack.yaml', classes=classes,
+                                     device='cpu',
                                      conf=rule.get('confidence', 0.3), iou=rule.get('iou_threshold', 0.7),
                                      verbose=False, imgsz=rule.get('image_size', 640))[0]
                 if action:

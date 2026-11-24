@@ -73,7 +73,8 @@ The administrator can issue separate local operator keys in Settings; source and
 2. For a person-zone instruction, choose **Restricted-zone dwell**; click a polygon around the area. Use at least three non-crossing points. A keyboard coordinate editor is also available.
 3. Confirm the dwell threshold, geometry, name and configured recipient. Click **Run analysis**.
 4. Detector weights download on their first run. To cache the default zone, traffic, and pose models before a demo, run:
-   `.venv/bin/python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); YOLO('yolo11n.pt'); YOLO('yolo11n-pose.pt')"`
+   `.venv/bin/python -c "from ultralytics import YOLO; YOLO('yolo26n.pt'); YOLO('yolo11n-pose.pt')"`
+   Zone, traffic and live preview use YOLO26 Nano on CPU by default. Live preview displays all 80 pretrained COCO categories; zone and traffic rules retain their task-specific filters. This is sampled detection, not a full-frame-rate video guarantee. Fight/fall analysis retains YOLO11 Pose and its separate action classifier.
 5. Inspect the run history and source evidence. An alert only appears if the actual detector/tracker and rule produce it. No promise is made of one alert without representative footage calibration.
 
 ## Traffic CO₂ and fight/fall notebooks

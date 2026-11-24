@@ -11,8 +11,8 @@ def detector_checkpoint(capability):
     if capability == 'action':
         return os.getenv('ZENITH_POSE_MODEL') or 'yolo11n-pose.pt'
     if capability == 'traffic':
-        return os.getenv('ZENITH_TRAFFIC_MODEL') or os.getenv('ZENITH_MODEL') or 'yolo11n.pt'
-    return os.getenv('ZENITH_MODEL') or 'yolov8n.pt'
+        return os.getenv('ZENITH_TRAFFIC_MODEL') or os.getenv('ZENITH_MODEL') or 'yolo26n.pt'
+    return os.getenv('ZENITH_MODEL') or 'yolo26n.pt'
 
 
 def action_checkpoint():
