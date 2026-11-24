@@ -111,16 +111,16 @@ with tempfile.TemporaryDirectory(prefix='zenith-jev-', dir=temp_root) as directo
                 'http://youtube.com/watch?v=abcdefghijk', 'https://user@youtube.com/watch?v=abcdefghijk',
                 'https://youtube.com/watch?v=invalid', 'https://127.0.0.1/live/abcdefghijk'):
         assert youtube.video_url(url) is None
-    with patch.object(subprocess, 'run', return_value=SimpleNamespace(stdout=json.dumps({
+    with patch.object(subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps({
             'is_live': True, 'url': 'https://example.googlevideo.com/live.m3u8?secret=signed'}))) as resolver:
         assert youtube.resolve(canonical).startswith('https://example.googlevideo.com/')
         assert '--ignore-config' in resolver.call_args.args[0]
     for info in ({'is_live': False}, {'is_live': True, 'url': 'http://127.0.0.1/private'},
                  {'is_live': True, 'url': 'https://googlevideo.com.evil.test/private'}):
-        with patch.object(subprocess, 'run', return_value=SimpleNamespace(stdout=json.dumps(info))):
-            rejected(lambda: youtube.resolve(canonical))
+        with patch.object(subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(info))):
+            rejected(lambda: youtube.resolve(canonical, use_cache=False))
     with patch.object(subprocess, 'run', side_effect=subprocess.TimeoutExpired('secret', 30)):
-        rejected(lambda: youtube.resolve(canonical))
+        rejected(lambda: youtube.resolve(canonical, use_cache=False))
     with patch.dict(os.environ, {'ZENITH_YOUTUBE_URL': canonical}):
         assert camera.configured() and camera.status()['protocol'] == 'YouTube'
 

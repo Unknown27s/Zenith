@@ -159,6 +159,8 @@ def _capture(owner, rule, vision_authorization=None, runtime=None, input_url=Non
     source_protocol = 'YouTube' if input_url else protocol()
     source_name = camera_name or source_protocol
     seconds = clip_seconds(rule)
+    resolver_input = input_url or source_url()
+    delay = 5
     try:
         while not stop_event.is_set():
             with Session() as session:
@@ -186,9 +188,11 @@ def _capture(owner, rule, vision_authorization=None, runtime=None, input_url=Non
                 cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
             if not cap.isOpened():
                 cap.release()
+                youtube.forget_cached(resolver_input)
                 with _lock:
                     state['state'] = 'reconnecting'
-                stop_event.wait(5)
+                stop_event.wait(delay)
+                delay = min(60, delay * 2)
                 continue
             with _lock:
                 state['state'] = 'capturing'
@@ -229,9 +233,12 @@ def _capture(owner, rule, vision_authorization=None, runtime=None, input_url=Non
                 path.unlink(missing_ok=True)
                 preview.unlink(missing_ok=True)
                 if not stop_event.is_set():
+                    if not frames:
+                        youtube.forget_cached(resolver_input)
                     with _lock:
                         state['state'] = 'reconnecting'
-                    stop_event.wait(5)
+                    stop_event.wait(delay)
+                    delay = min(60, delay * 2)
                 continue
             # The written file contains 10 frames per second; frame timestamps are relative to this clip.
             duration = frames / 10
@@ -266,6 +273,7 @@ def _capture(owner, rule, vision_authorization=None, runtime=None, input_url=Non
                 session.commit()
             with _lock:
                 state['last_clip_at'] = time.time()
+            delay = 5
     except Exception:
         # Never log an exception/connection URL: it can include RTSP credentials.
         log.error('Network capture stopped unexpectedly; inspect configuration privately')

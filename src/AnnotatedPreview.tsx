@@ -35,7 +35,15 @@ export default function AnnotatedPreview({camera, connected, refresh, notify}: {
         setFrame(url); setFresh(capturedAt > 0 ? capturedAt*1000 : Date.now()); setError('');
         if (old) URL.revokeObjectURL(old);
       } catch (failure) {
-        if (!controller.signal.aborted) setError((failure as Error).message);
+        if (!controller.signal.aborted) {
+          const msg = (failure as Error).message;
+          // While the connector is resolving the stream and YOLO is warming up, 503 is expected startup buffering.
+          if ((msg.includes('No fresh annotated frame') || msg.includes('503')) && !fresh) {
+            setError('');
+          } else {
+            setError(msg);
+          }
+        }
       }
       if (!controller.signal.aborted) timer = window.setTimeout(load, 500);
     }
@@ -60,7 +68,7 @@ export default function AnnotatedPreview({camera, connected, refresh, notify}: {
       <span className="badge">{enabled ? camera.live.state : 'Preview stopped'}</span></div>
     <div className="annotated-stage">
       {frame ? <img src={frame} alt={`YOLO detections from ${camera.name}`}/> : <p>{enabled ? 'Connecting to stream and loading YOLO…' : 'Start the preview to see people and vehicle detections.'}</p>}
-      <span>{!connected || error ? 'STALE / UNAVAILABLE' : enabled ? 'SAMPLED DETECTION PREVIEW · ≤2 FPS' : 'STOPPED · LAST FRAME ONLY'}</span>
+      <span>{!connected || error ? 'STALE / UNAVAILABLE' : enabled ? (fresh ? 'SAMPLED DETECTION PREVIEW · ≤2 FPS' : 'CONNECTING · BUFFERING FRAMES') : 'STOPPED · LAST FRAME ONLY'}</span>
     </div>
     <div className="annotated-controls">
       <label className="checkbox"><input type="checkbox" checked={permission} onChange={event => setPermission(event.target.checked)}/>
@@ -69,7 +77,7 @@ export default function AnnotatedPreview({camera, connected, refresh, notify}: {
         <button className="button primary" disabled={!connected || busy || enabled || !permission} onClick={() => void control(true)}><Play size={15}/> Start YOLO preview</button>
         <button className="button secondary" disabled={!connected || busy || !enabled} onClick={() => void control(false)}><Square size={15}/> Stop YOLO preview</button>
       </div>
-      <p role="status">{error || (fresh ? `Frame decoded by connector at ${new Date(fresh).toLocaleTimeString()}.` : 'No annotated frames received yet.')}
+      <p role="status">{error || (fresh ? `Frame decoded by connector at ${new Date(fresh).toLocaleTimeString()}.` : enabled ? 'Connecting to stream and loading YOLO…' : 'No annotated frames received yet.')}
         {camera.live.detections !== undefined ? ` Latest frame: ${camera.live.detections} detected object(s).` : ''}</p>
       <p>Sampled preview, not full-frame-rate CCTV. {camera.live.model ? `Detector: ${camera.live.model}. ` : ''}
         Preview uses confidence 0.30 and 416-pixel inference; incident-rule settings are independent.

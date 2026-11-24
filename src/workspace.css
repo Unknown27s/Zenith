@@ -60,6 +60,40 @@
 .workspace-credit { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
 .workspace-credit a { text-decoration: underline; }
 .workspace-estimate strong { font-size: 1.3rem; }
+.review-dialog {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+  padding: 24px 28px;
+  width: min(520px, 92vw);
+  box-shadow: 0 20px 70px rgba(5, 21, 13, 0.35);
+  margin: auto;
+}
+.review-dialog::backdrop {
+  background: rgba(16, 35, 27, 0.7);
+  backdrop-filter: blur(4px);
+}
+.review-dialog form {
+  display: grid;
+  gap: 16px;
+}
+.review-dialog h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+.review-dialog label {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.review-dialog textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 80px;
+}
 @media (max-width: 1170px) {
   .workspace-modes { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }

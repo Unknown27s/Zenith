@@ -111,7 +111,7 @@ export default function HealthPanel({status, connected, refresh}: {
               detail: `${result.detail} ${result.available ? 'Model-list check only; no frames or inference requests sent.' : 'Frame sharing/review is disabled.'}`};
           }) : Promise.resolve(put('vision', {state: 'unchecked', detail: 'Optional vision review is off or not configured. YOLO triggers can still alert.'}, controller)),
           !current.channels?.telegram.configured ? Promise.resolve(put('telegram', {state: 'unchecked', detail: 'Bot token and chat allowlist are not configured.'}, controller))
-            : !current.is_admin || !session.key ? Promise.resolve(put('telegram', {state: 'warning', detail: 'Configured. Sign in with the administrator key to test the bot connection; automatic local sessions cannot run administrator checks.'}, controller))
+            : !current.is_admin ? Promise.resolve(put('telegram', {state: 'warning', detail: 'Configured. Telegram setup checks are available in the main workspace.'}, controller))
             : check('telegram', async () => {
               const result = await json<{reachable: boolean | null; detail: string}>('/notifications/status', {signal: signal()});
               return {state: result.reachable === true ? 'pass' : result.reachable === false ? 'fail' : 'warning',
@@ -175,12 +175,11 @@ export default function HealthPanel({status, connected, refresh}: {
     <div className="health-check-actions">
       <button className="button secondary" disabled={!connected || !status?.camera?.configured || busy || previewing}
         onClick={() => void checkStream()}>{previewing ? 'Reading stream…' : 'Check stream frame'}</button>
-      {status?.is_admin && <button className="button secondary" disabled={!connected || !session.key || !status.channels?.telegram.configured || sending}
+      {status?.is_admin && <button className="button secondary" disabled={!connected || !status.channels?.telegram.configured || sending}
         onClick={() => void sendTest()}><Send size={15}/>{sending ? 'Sending test…' : 'Send test Telegram alert'}</button>}
       <a className="text-link" href="#cameras">Open cameras & live streams →</a>
     </div>
     {message && <p className="health-check-message" role="status">{message}</p>}
-    {connected && status?.is_admin && !session.key && <p className="health-check-footnote">Enter the administrator key in Backend connection to enable Telegram connection and delivery tests.</p>}
     <p className="health-check-footnote"><ShieldCheck size={15}/> Bot and model checks test connectivity only. Email delivery, detector accuracy and full end-to-end incident delivery are not verified here.</p>
   </section>;
 }

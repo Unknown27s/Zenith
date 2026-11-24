@@ -134,6 +134,23 @@ Get an API Catalog key at https://build.nvidia.com/ from an image-capable model'
 
 An alert is created only when a confirmed rule observation is saved. Detection alone does not message anyone.
 
+### YouTube live resolution
+
+Saved YouTube inputs use yt-dlp first, preferring video-only HLS up to 720p
+(audio is not required for YOLO). Resolver/format failures automatically try
+Streamlink's live HLS resolver. Both dependencies are in `backend/requirements.txt`;
+restart the launcher after updating so it installs them. The fallback has a
+30-second timeout (`STREAMLINK_TIMEOUT`); yt-dlp defaults to 45 seconds
+(`YT_DLP_TIMEOUT`). Signed stream URLs stay on the backend.
+If a stream fails to open, the cached URL is discarded and retries back off
+from 5 seconds up to 60 seconds, so an expired signed link is resolved fresh
+without repeatedly re-running the resolver.
+Private/restricted, bot-check, rate-limited, ended and non-live results do not
+trigger fallback. Streamlink is not a way to bypass provider restrictions.
+An optional `YOUTUBE_COOKIES_FILE` is used by both resolvers.
+This does not add support for arbitrary webcam websites in the saved-input UI.
+Direct server-configured RTSP/HLS inputs do not need either resolver.
+
 **Telegram (recommended for phones)**
 
 1. Create a bot with **@BotFather** and copy its token. If a token is ever exposed, run `/revoke` in @BotFather and use the new one.

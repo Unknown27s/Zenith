@@ -90,15 +90,21 @@ def frame(camera_id):
 def _decode(runtime, url):
     import cv2
     stop_event = runtime['stop']
+    delay = 5
     try:
         while not stop_event.is_set():
             cap = None
+            opened = False
             try:
                 stream = youtube.resolve(url)
                 cap = cv2.VideoCapture(stream, cv2.CAP_FFMPEG, [
                     cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
                 if not cap.isOpened():
+                    # A signed URL can expire before the cache TTL; resolve fresh next time.
+                    youtube.forget_cached(url)
                     raise ValueError('Stream could not be opened')
+                opened = True
+                delay = 5
                 while not stop_event.is_set():
                     ok, image = cap.read()
                     if not ok:
@@ -120,7 +126,9 @@ def _decode(runtime, url):
             finally:
                 if cap is not None:
                     cap.release()
-            stop_event.wait(5)
+            stop_event.wait(delay)
+            if not opened:
+                delay = min(60, delay * 2)
     finally:
         stop_event.set()
 

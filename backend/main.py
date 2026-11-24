@@ -692,8 +692,15 @@ def notifications(identity=Depends(owner)):
 _last_alert_test = 0.0
 
 
+def notification_administrator(identity=Depends(owner)):
+    """Allow the verified local workspace to test Telegram without key entry."""
+    if not secrets.compare_digest(identity, hashlib.sha256(TOKEN.encode()).hexdigest()):
+        raise HTTPException(403, 'Telegram setup checks are available only to the administrator workspace')
+    return identity
+
+
 @app.get('/api/notifications/status')
-def notification_status(identity=Depends(administrator)):
+def notification_status(identity=Depends(notification_administrator)):
     """Explicit non-sending Telegram connectivity check. Never exposes the bot token."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
         return {'configured': False, 'reachable': None,
@@ -703,7 +710,7 @@ def notification_status(identity=Depends(administrator)):
 
 
 @app.post('/api/notifications/test')
-def test_alert(identity=Depends(administrator)):
+def test_alert(identity=Depends(notification_administrator)):
     """Send one explicit setup check to each allowlisted Telegram chat. Never returns the bot token."""
     global _last_alert_test
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:

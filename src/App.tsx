@@ -279,9 +279,11 @@ function Studio({data,connected,notify,refresh,selectedSourceId}: Props & {selec
           <summary>Camera sources</summary>
           <p className="info-note">For YouTube inputs, paste URLs directly in <a className="text-link" href="#cameras">Cameras & live streams →</a>. Each saved camera has its own YOLO preview page and incident rule.</p>
          <CameraCapture disabled={!connected||!!busy} onClip={file=>void upload(file)}/>
-          {data.status?.camera && (
+          {data.status?.camera ? (
            <NetworkCamera camera={data.status.camera} rule={rulePayload()}
              vision={vision} workerOnline={!!data.status.worker_online} actionReady={!missingAction} connected={connected} notify={notify} refresh={refresh}/>
+         ) : (
+           <p className="info-note">Connect a backend to configure YouTube, RTSP or HLS input. <a className="text-link" href="#settings">Open health checks & setup →</a></p>
          )}
        </details>
        <div className="video-stage">{source?<>
@@ -292,7 +294,6 @@ function Studio({data,connected,notify,refresh,selectedSourceId}: Props & {selec
           {capability==='traffic'&&segment&&points.length>=2&&(
             <text x={points[0][0]*source.width+6} y={points[0][1]*source.height-8} fill="#d0ec85" fontSize={Math.max(12, Math.round(source.width/50))} fontWeight="600" style={{paintOrder:'stroke',stroke:'#102019',strokeWidth:3}}>Gate A (entry)</text>
           )}
-          {!data.status?.camera&&<p className="info-note">Connect a backend to configure YouTube, RTSP or HLS input. <a className="text-link" href="#settings">Open health checks & setup →</a></p>}
           {capability==='traffic'&&segment&&points.length>=4&&(
             <text x={points[2][0]*source.width+6} y={points[2][1]*source.height-8} fill="#d0ec85" fontSize={Math.max(12, Math.round(source.width/50))} fontWeight="600" style={{paintOrder:'stroke',stroke:'#102019',strokeWidth:3}}>Gate B (exit)</text>
           )}
