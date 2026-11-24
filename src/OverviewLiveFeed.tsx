@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, ChevronRight, ExternalLink, Play, Radio, RefreshCw, Square, Video } from 'lucide-react';
+import { Camera, ChevronRight, Play, Radio, RefreshCw, Square, Video } from 'lucide-react';
 import { json, request } from './api';
 import type { SavedCamera } from './types';
+import { cameraClipState, analysisModes } from './workflow';
 
 export default function OverviewLiveFeed({
   connected,
@@ -20,11 +21,10 @@ export default function OverviewLiveFeed({
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [permission, setPermission] = useState(true);
   const imageUrl = useRef('');
   const activeController = useRef<AbortController | null>(null);
 
-  // 1. Load saved cameras
+  // 1. Load saved cameras and keep their capture/preview status fresh.
   useEffect(() => {
     if (!connected) {
       setCameras([]);
@@ -37,29 +37,25 @@ export default function OverviewLiveFeed({
         const rows = await json<SavedCamera[]>('/cameras', { signal: controller.signal });
         if (controller.signal.aborted) return;
         setCameras(rows);
-        if (rows.length > 0 && (!selectedId || !rows.some(c => c.id === selectedId))) {
-          setSelectedId(rows[0].id);
-          setEnabled(rows[0].live.active);
-        }
+        setSelectedId(current => rows.some(c => c.id === current) ? current : (rows[0]?.id || ''));
       } catch {
-        /* Handled gracefully */
+        /* Keep the last known camera list while the backend reconnects. */
       }
     }
     void loadCameras();
-    return () => controller.abort();
+    const timer = window.setInterval(loadCameras, 5000);
+    return () => { controller.abort(); window.clearInterval(timer); };
   }, [connected]);
 
   const selectedCamera = cameras.find(c => c.id === selectedId);
 
-  // Sync enabled state when selected camera changes
+  // Sync enabled state when the camera changes or its preview stops elsewhere.
   useEffect(() => {
-    if (selectedCamera) {
-      setEnabled(selectedCamera.live.active);
-      setFrame('');
-      setFresh(null);
-      setError('');
-    }
-  }, [selectedCamera?.id]);
+    setEnabled(!!selectedCamera?.live.active);
+    setFrame('');
+    setFresh(null);
+    setError('');
+  }, [selectedCamera?.id, selectedCamera?.live.active]);
 
   // If not enabled and camera has no frame yet, load a single snapshot as cover
   useEffect(() => {
@@ -160,7 +156,7 @@ export default function OverviewLiveFeed({
           <span className={`live-feed-pulse ${enabled && fresh ? 'on' : ''}`} aria-hidden="true" />
           <div>
             <h2>Live camera monitoring</h2>
-            <p>Direct view of active camera streams and real-time YOLO object detections.</p>
+            <p>Optional sampled detection view. It does not record clips, count vehicles, create findings or send alerts.</p>
           </div>
         </div>
         <div className="live-feed-header-actions">
@@ -195,7 +191,7 @@ export default function OverviewLiveFeed({
                 <p>
                   {enabled
                     ? 'Connecting to stream and buffering YOLO inference…'
-                    : 'Click "Start live feed" below to begin live detection stream.'}
+                    : 'Click "Start live preview" below to begin the sampled detection view.'}
                 </p>
               </div>
             )}
@@ -210,13 +206,16 @@ export default function OverviewLiveFeed({
                   ? fresh
                     ? '● LIVE · ≤2 FPS'
                     : 'CONNECTING…'
-                  : 'STANDBY'}
+                  : frame
+                    ? 'STANDBY · LAST FRAME'
+                    : 'STANDBY'}
               </span>
             </div>
 
-            {selectedCamera.live.detections !== undefined && enabled && fresh && (
+            {(enabled || frame) && selectedCamera.live.detections !== undefined && fresh && (
               <div className="overview-overlay-bottom">
                 <span>
+                  {enabled ? '' : 'Last frame · not live · '}
                   {selectedCamera.live.detections} object{selectedCamera.live.detections === 1 ? '' : 's'} in frame
                 </span>
               </div>
@@ -237,7 +236,7 @@ export default function OverviewLiveFeed({
                 ) : (
                   <Play size={15} />
                 )}
-                {busy ? 'Processing…' : enabled ? 'Pause stream' : 'Start live feed'}
+                {busy ? 'Processing…' : enabled ? 'Pause preview' : 'Start live preview'}
               </button>
 
               <span className="overview-feed-meta">
@@ -247,7 +246,9 @@ export default function OverviewLiveFeed({
                   ? `Decoded at ${new Date(fresh).toLocaleTimeString()}`
                   : enabled
                   ? 'Initializing stream & neural network…'
-                  : 'Stream in standby'}
+                  : frame
+                    ? 'Standby · showing the last received frame'
+                    : 'Preview stopped'}
               </span>
             </div>
 
@@ -260,6 +261,9 @@ export default function OverviewLiveFeed({
               </a>
             </div>
           </div>
+          <p className="live-feed-note"><strong>Incident rule:</strong> {selectedCamera.last_rule
+            ? `${analysisModes[selectedCamera.last_rule.capability]?.label || selectedCamera.last_rule.capability} · ${selectedCamera.last_rule.name}`
+            : 'Not saved'} · <strong>Clip analysis:</strong> {cameraClipState(selectedCamera.health.state)}. The live feed above is preview only.</p>
         </div>
       ) : (
         <div className="overview-video-empty">

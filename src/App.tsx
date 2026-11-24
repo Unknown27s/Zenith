@@ -89,10 +89,10 @@ export default function App() {
       <nav aria-label="Main navigation">{navigation.map(({id,label,icon:Icon})=><a key={id} className={page===id?'active':''} href={`#${id}`} aria-current={page===id?'page':undefined}><Icon size={19}/><span>{label}</span>{id==='incidents'&&connected&&data.events.filter(x=>x.operator_status==='suspected').length>0&&<span className="nav-count">{data.events.filter(x=>x.operator_status==='suspected').length}</span>}</a>)}</nav>
       <div className="sidebar-bottom">
         <a className={page==='settings'?'settings-link active':'settings-link'} href="#settings"><Settings2 size={18}/> Health & settings</a>
-        <div className="operator"><span className="operator-avatar">Z</span><div><strong>{data.status?.is_admin?'Administrator':'Operator'}</strong><small>{connected?'Workspace connected':connecting?'Connecting':'Workspace disconnected'}</small></div></div>
+        <div className="operator"><span className="operator-avatar">Z</span><div><strong>{data.status?.is_admin?'Administrator':'Operator'}</strong><small>{connected?(data.status?.worker_online?'Worker online':'Worker offline'):connecting?'Connecting':'Workspace disconnected'}</small></div></div>
       </div>
     </aside>
-    <div className="main-shell"><header className="topbar"><div className="breadcrumb"><button className="icon-button mobile-toggle" aria-label="Open navigation" onClick={()=>setMobile(true)}><Menu size={20}/></button><span>Workspace</span><ChevronRight size={14}/><strong>{titles[page]}</strong></div><div className="topbar-right"><span className="environment"><span className={`status-dot ${connected?'on':''}`}/>{connected?'Backend connected':'Not connected'}</span><a href="#how" aria-label="How it works" className="icon-button"><CircleHelp size={19}/></a><a href="#incidents" aria-label="Open incidents" className="icon-button"><Bell size={19}/></a><span className="top-avatar">TZ</span></div></header>
+    <div className="main-shell"><header className="topbar"><div className="breadcrumb"><button className="icon-button mobile-toggle" aria-label="Open navigation" onClick={()=>setMobile(true)}><Menu size={20}/></button><span>Workspace</span><ChevronRight size={14}/><strong>{titles[page]}</strong></div><div className="topbar-right"><span className={`environment ${connected&&!data.status?.worker_online?'warn':''}`}><span className={`status-dot ${connected?'on':''}`}/>{connected?`Backend connected · worker ${data.status?.worker_online?'online':'offline'}`:'Not connected'}</span><a href="#how" aria-label="How it works" className="icon-button"><CircleHelp size={19}/></a><a href="#incidents" aria-label="Open incidents" className="icon-button"><Bell size={19}/></a><span className="top-avatar">TZ</span></div></header>
       <main className="content" id="main-content" tabIndex={-1}>
         {!connected&&page!=='settings'&&<div className="connection-banner" role="status">
           <Radio size={16}/><span>{connecting?'Connecting to the workspace…':failure}</span>
@@ -170,6 +170,7 @@ function RunList({runs}: {runs:Run[]}) {
   return <div className="run-list">{runs.map(run=><a key={run.id} className="run-row workspace-run" href={runLink(run)}>
     <span className="file-icon"><MonitorPlay size={20}/></span>
     <div className="run-info"><strong>{run.source_name}</strong><small>{analysisModes[run.rule.capability]?.label || run.rule.capability} · {date(run.created)}</small>
+      {(run.status==='processing'||run.status==='queued')&&<small>{run.stage||runStatus(run)}</small>}
       {run.status==='processing'&&<progress aria-label="Analysis progress" value={run.progress} max={100}/>}
       {run.error&&<small className="error-text">{run.error}</small>}
     </div>
@@ -333,7 +334,7 @@ function Studio({data,connected,notify,refresh,selectedSourceId}: Props & {selec
       <input type="checkbox" checked={review} disabled={!vision.available} onChange={e=>setReview(e.target.checked)}/>
        <span>{vision.available
          ? <>{vision.provider!=='local'
-             ? `I have permission to send sampled frames and incident evidence from this clip to ${vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'} for advisory review.`
+             ? `I have permission to send sampled frames and incident evidence from this clip to ${vision.provider==='typesafe'?'TypeSafe (experimental image review)':'NVIDIA'} for advisory review.`
              : 'Summarize sampled video frames and review saved incident evidence with the local vision model.'} Up to {vision.auto_limit} incidents per run.</>
          : `Vision review is configured but not available: ${vision.detail||'check Settings'}.`}</span>
     </label>}<button className="button primary full" disabled={!!blocker||!!busy} onClick={()=>void run()}>
@@ -394,7 +395,7 @@ function IncidentVision({event,vision,connected,notify,refresh}: {
     {vision?.available&&!pending&&event.frames.length>0&&<>
       {vision.provider!=='local'&&<label className="checkbox">
         <input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>
-        <span>I have permission to send this incident’s evidence frames to {vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'}.</span>
+        <span>I have permission to send this incident’s evidence frames to {vision.provider==='typesafe'?'TypeSafe (experimental image review)':'NVIDIA'}.</span>
       </label>}
       <button className="button secondary" type="button" disabled={!connected||busy||(vision.provider!=='local'&&!consent)} onClick={()=>void requestReview()}>
         {busy?'Queueing…':review?.status==='completed'||review?.status==='failed'?'Run review again':'Request review'}
@@ -427,7 +428,7 @@ function Incidents({data,connected,notify,refresh,selectedId}: Props & {selected
   const events=data.events.filter(e=>filter==='all'||e.operator_status===filter);
   async function act(action:string){if(!event)return;setBusy(true);try{await json(`/events/${event.id}/acknowledge`,{method:'POST',body:JSON.stringify({action,note})});setNote('');refresh();notify('Operator decision recorded.');}catch(e){notify((e as Error).message);}finally{setBusy(false);}}
   return <><Heading eyebrow="OBSERVATIONS, NOT ASSUMPTIONS" title="Incident review">Review the source evidence, record a decision, and keep people in control.</Heading><div className="tab-row">{[['all','All observations'],['suspected','Needs review'],['acknowledged','Acknowledged'],['confirmed','Confirmed'],['dismissed','Dismissed']].map(([id,label])=><button className={filter===id?'selected':''} key={id} onClick={()=>setFilter(id)}>{label}</button>)}</div><section className="panel">{events.length?<div className="incident-list">{events.map(e=><button className="incident-row" key={e.id} onClick={()=>{setSelected(e.id);setNote('');}}>{e.frames.length?<ProtectedImage path={`/events/${e.id}/evidence/${e.frames[0]}`} alt="Incident evidence"/>:<span className="empty-icon"><ShieldCheck/></span>}<div><div className="incident-title"><strong>{e.title}</strong><Badge tone={e.operator_status==='suspected'?'warning':'success'}>{e.operator_status}</Badge></div><p>{e.source_name} · source {e.source_seconds.toFixed(2)}s</p><small>{date(e.created)}</small></div><ArrowUpRight size={18}/></button>)}</div>:<Empty icon={ShieldCheck} title="No observations in this view">Rule-generated events will appear here after real footage is analyzed. An empty list is not a safety guarantee.</Empty>}</section>
-    <section className="panel section-gap"><div className="panel-heading"><div><h2>Notification outbox</h2><p>Delivery state is separate from an operator’s acknowledgement.</p></div><Badge>{data.status?.channels?.telegram?.configured?'Telegram configured':data.status?.email_mode==='configured'?'Email configured':'Preview mode'}</Badge></div>{data.notifications.length?<div className="notification-list">{data.notifications.map(n=><details key={n.id}><summary><Bell size={17}/><span>{n.subject}<small>{recipientLabel(n.recipient)}</small></span><Badge tone={n.status==='sent'?'success':'neutral'}>{n.status}</Badge></summary><pre>{n.text}</pre><p>{n.delivery||n.error||'Preview does not mean sent. Configure Telegram or email, then verify with a test alert.'}</p></details>)}</div>:<div className="inline-empty">No notification tasks. Configure an approved recipient before running a rule.</div>}</section>
+    <section className="panel section-gap"><div className="panel-heading"><div><h2>Notification outbox</h2><p>Delivery state is separate from an operator’s acknowledgement.</p></div><Badge>{data.status?.channels?.telegram?.configured?'Telegram configured':data.status?.email_mode==='configured'?'Email configured':'Preview mode'}</Badge></div>{data.notifications.length?<div className="notification-list">{data.notifications.map(n=><details key={n.id}><summary><Bell size={17}/><span>{n.subject}<small>{recipientLabel(n.recipient)}</small></span><Badge tone={n.status==='sent'?'success':'neutral'}>{n.status}</Badge></summary><pre>{n.text}</pre><p>{n.delivery||n.error||'Preview does not mean sent. Configure Telegram or email, then verify with a test alert.'}</p></details>)}</div>:<div className="inline-empty">No notification tasks yet. Tasks appear when a confirmed rule produces an observation and a recipient is approved.</div>}</section>
     {event&&<div className="modal-backdrop" onClick={closeModal}><section className="modal" role="dialog" aria-modal="true" aria-label="Incident review" onClick={e=>e.stopPropagation()}><div className="panel-heading"><div><Badge tone="warning">RULE OBSERVATION</Badge><h2>{event.title}</h2><p>{event.source_name} · source {event.source_seconds.toFixed(2)}s</p></div><button className="icon-button" aria-label="Close incident review" onClick={closeModal}><X/></button></div><div className="evidence-grid">{event.frames.map(frame=><figure key={frame}><ProtectedImage path={`/events/${event.id}/evidence/${frame}`} alt={`${frame.includes('before')?'Before':frame.includes('after')?'After':'During'} event evidence`}/><figcaption>{frame.includes('before')?'Before':frame.includes('after')?'After':'During'}</figcaption></figure>)}</div><p>{event.detail}</p>{event.alert?.status==='suppressed'&&<div className="info-note">Alert suppressed for {event.alert.cooldown_seconds}s after the previous alert for this rule. The incident and evidence were kept.{event.alert.suppressed_until?` Next alert allowed after ${date(event.alert.suppressed_until)}.`:''}</div>}{event.alert?.status==='queued'&&<div className="info-note">Alert queued to {event.alert.recipients?.length||0} recipient(s). Delivery state is in the notification outbox.</div>}<IncidentVision key={event.id} event={event} vision={data.status?.vision} connected={connected} notify={notify} refresh={refresh}/><label>Action note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength={1000} placeholder="What did you verify? What action was taken?"/></label><div className="action-row"><button className="button primary" disabled={!connected||busy} onClick={()=>void act('acknowledged')}><Check size={16}/> Acknowledge</button><button className="button secondary" disabled={!connected||busy} onClick={()=>void act('confirmed')}>Confirm observation</button><button className="button secondary" disabled={!connected||busy} onClick={()=>void act('dismissed')}>Dismiss</button></div><div className="history">{event.history.map(h=><p key={`${h.at}-${h.action}`}><strong>{h.action}</strong> · {date(h.at)}<br/>{h.note}</p>)}</div></section></div>}
   </>;
 }
@@ -466,7 +467,6 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
   }
 
   // Handle incoming link or candidate run pre-selection
-  const linkedRun=data.runs.find(run=>run.id===(runId||requestedRunId)&&run.status==='completed'&&(run.rule.capability==='traffic'||run.rule.capability==='machine_activity'));
   const selectedRun=data.runs.find(run=>run.id===runId);
 
   useEffect(()=>{
@@ -552,6 +552,13 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
     liveEquation=`${numQuantity} vehicles × ${numDist} km × ${effectiveFactor} ${factorUnit} ÷ 1,000`;
   }
 
+  const quantitySummary=kind==='traffic'
+    ? `${sourceMode==='run'&&selectedRun?(selectedRun.counts[vehicleClass]??0):numQuantity} ${vehicleClass} vehicles`
+    : kind==='electricity'
+      ? metered?`${numMetered} metered kWh`:`${numQuantity} kW × ${numHours} h × ${numLoad} load`
+      : `${numQuantity} litres`;
+  const activityKind=kind==='traffic'?'Road traffic':kind==='fuel'?'Fuel combustion':'Electric equipment';
+
   function getPayload(){
     return JSON.stringify({
       name:activityName.trim()||(selectedRun?selectedRun.source_name:`${kind} estimate`),
@@ -560,7 +567,7 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
       metered_kwh:kind==='electricity'&&metered?numMetered:null,
       factor:effectiveFactor,
       factor_id:factor&&!factor.preset?factor.id:null,
-      factor_source:effectiveSource||'Operator manual citation',
+      factor_source:effectiveSource,
       basis:basis.trim()||(selectedRun?`Calculated from CCTV analysis of ${selectedRun.source_name}`:'Operator documented activity'),
       hours:kind==='electricity'&&!metered?(sourceMode==='run'&&selectedRun?(selectedRun.activity_seconds||0)/3600:numHours||1):1,
       load_fraction:kind==='electricity'&&!metered?numLoad||1:1,
@@ -571,17 +578,34 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
     });
   }
 
+  const manualSourceMissing=!factor&&effectiveFactor>0&&manualSource.trim().length<3;
+  const runMissing=sourceMode==='run'&&kind!=='fuel'&&!selectedRun;
+  const proxyMissing=kind==='electricity'&&!metered&&sourceMode==='run'&&!!selectedRun&&!proxy;
+  const canCalculate=connected&&!busy&&!previewing&&effectiveFactor>0&&!manualSourceMissing&&!runMissing&&!proxyMissing&&!!activityName.trim()&&basis.trim().length>=3;
+
   async function submitCalculation(save:boolean){
     if(!effectiveFactor||effectiveFactor<=0){
-      setEstimateError('Please select or specify a valid positive emission factor in Step 2.');
+      setEstimateError('Select or enter a positive emission factor in Step 2.');
+      return;
+    }
+    if(manualSourceMissing){
+      setEstimateError('Add the source, region and year for the manual factor in Step 2.');
+      return;
+    }
+    if(runMissing){
+      setEstimateError('Choose a completed CCTV run in Step 1, or switch the activity data source to Manual Log / Meter.');
       return;
     }
     if(!activityName.trim()){
-      setEstimateError('Please provide an activity or equipment name in Step 4.');
+      setEstimateError('Give this activity a name in Step 4.');
       return;
     }
-    if(kind==='electricity'&&!metered&&sourceMode==='run'&&!proxy){
-      setEstimateError('Please accept the visible-motion activity proxy disclaimer before saving.');
+    if(basis.trim().length<3){
+      setEstimateError('Describe how the activity quantity was measured in Step 4.');
+      return;
+    }
+    if(proxyMissing){
+      setEstimateError('Accept the visible-motion proxy disclaimer before saving.');
       return;
     }
 
@@ -627,7 +651,7 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
         <small>Vehicle-kilometre travel estimates</small>
       </section>
       <section className="stat-card">
-        <div className="stat-top">Audited ledger entries<FileText size={20}/></div>
+        <div className="stat-top">Saved ledger entries<FileText size={20}/></div>
         <strong>{data.carbon.length}</strong>
         <small>Saved with source, formula & assumptions</small>
       </section>
@@ -638,7 +662,7 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
         <div className="panel-heading">
           <div>
             <h2>Calculate emission estimate</h2>
-            <p>Follow the 4-step guided accounting pipeline to build an auditable calculation.</p>
+            <p>Four sections: activity and source, documented factor, quantities, then preview and save.</p>
           </div>
           <Leaf size={22}/>
         </div>
@@ -820,9 +844,9 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
             {effectiveFactor > 0 && (
               <div className="factor-active-card">
                 <div className="factor-active-meta">
-                  <span className="badge success">VERIFIED FACTOR ACTIVE</span>
-                  <strong>{effectiveSource || 'Manual source documented'}</strong>
-                  <small>Applicable unit: {factorUnit}</small>
+                  <span className="badge success">FACTOR SELECTED</span>
+                  <strong>{effectiveSource || 'Source not documented yet'}</strong>
+                  <small>{manualSourceMissing ? 'Add a source citation below before saving.' : `Applicable unit: ${factorUnit}`}</small>
                 </div>
                 <div className="factor-active-val">{effectiveFactor} <small>{factorUnit}</small></div>
               </div>
@@ -966,20 +990,32 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
               </label>
             )}
 
+            <div className="carbon-save-summary">
+              <div><span>READY TO SAVE</span><strong>{activityName.trim() || 'Name this activity in Step 4'}</strong></div>
+              <dl>
+                <div><dt>Activity</dt><dd>{activityKind}</dd></div>
+                <div><dt>Quantity</dt><dd>{quantitySummary}</dd></div>
+                <div><dt>Factor</dt><dd>{effectiveFactor > 0 ? `${effectiveFactor} ${factorUnit}` : 'Not selected'}</dd></div>
+                <div><dt>Source</dt><dd>{effectiveSource || 'Not documented'}</dd></div>
+                <div><dt>Live result</dt><dd>{new Intl.NumberFormat('en-IN',{maximumFractionDigits:4}).format(liveKg)} kg</dd></div>
+              </dl>
+              <p>Nothing is saved until you click <strong>Save to activity ledger</strong>. Preview asks the server to recalculate and show the exact formula first.</p>
+            </div>
+
             <div className="action-row">
               <button
                 type="button"
                 className="button primary"
-                disabled={!connected||busy||previewing||!effectiveFactor}
+                disabled={!canCalculate}
                 onClick={()=>void submitCalculation(false)}
               >
-                <Sparkles size={16}/>{previewing?'Validating…':'Preview server breakdown'}
+                <Sparkles size={16}/>{previewing?'Calculating…':'Preview formula (not saved)'}
               </button>
 
               <button
                 type="button"
                 className="button secondary"
-                disabled={!connected||busy||previewing||!effectiveFactor}
+                disabled={!canCalculate}
                 onClick={()=>void submitCalculation(true)}
               >
                 <Leaf size={16}/>{busy?'Saving…':'Save to activity ledger'}
@@ -989,10 +1025,12 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
             {estimateError&&<p className="error-text" role="alert">{estimateError}</p>}
 
             {preview&&(
-              <div className="info-note workspace-estimate" role="status" style={{background:'#edf5ea',border:'1px solid #c2dec0'}}>
-                <strong>Verified: {new Intl.NumberFormat('en-IN',{maximumFractionDigits:6}).format(preview.kg)} kg {preview.kind==='traffic'?'CO₂':'CO₂e'}</strong>
+              <div className="info-note workspace-estimate carbon-preview-result" role="status">
+                <span className="badge warning">Preview only — not saved</span>
+                <strong>Server preview: {new Intl.NumberFormat('en-IN',{maximumFractionDigits:6}).format(preview.kg)} kg {preview.kind==='traffic'?'CO₂':'CO₂e'}</strong>
                 <p><code>{preview.formula}</code></p>
                 <p><strong>Source:</strong> {preview.factor_source} · <strong>Coverage:</strong> {preview.coverage}</p>
+                <p className="small-note">Saving commits this exact server calculation to the ledger.</p>
               </div>
             )}
           </div>
@@ -1082,7 +1120,7 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
         </div>
       ):(
         <Empty icon={Leaf} title="No factors. No invented footprint.">
-          Follow the 4-step pipeline above to calculate and commit your first verified activity estimate.
+          Use the four sections above to calculate and save your first documented activity estimate.
         </Empty>
       )}
     </section>
@@ -1097,15 +1135,15 @@ function Reports({data,connected,notify}:Props) {
 
 function HowItWorks() {
   const steps=[
-    {icon:Upload,title:'Bring your footage',text:'Upload a short, permitted-use video. Zenith saves a private source and decodes a preview. This MVP does not connect directly to cameras.'},
+    {icon:Upload,title:'Bring your footage',text:'Upload a short permitted clip, or add a permitted YouTube livestream in Cameras & live streams. Zenith keeps sources private and decodes a preview. Saved cameras record short bounded clips rather than a continuous feed.'},
     {icon:Sparkles,title:'Describe & confirm',text:'A constrained English parser suggests one supported capability. You draw the exact zone or counting line, choose a duration and approved recipients, then confirm.'},
-    {icon:Cpu,title:'Detect, track & apply rules',text:'The worker uses YOLOv8 Nano and ByteTrack for people and vehicles. Python checks zone dwell or a finite line crossing. Equipment mode uses pixel motion, not an on/off model.'},
+    {icon:Cpu,title:'Detect, track & apply rules',text:'The worker uses the configured YOLO detector (YOLO26 Nano by default) and ByteTrack for people and vehicles. Python checks zone dwell, traffic line crossings, or the separate pose/action classifier. Equipment mode uses pixel motion, not an on/off model.'},
     {icon:ShieldCheck,title:'Inspect the observation',text:'The rule stores a suspected event and source-timestamped frames. Before and after frames are included only when available. You acknowledge, confirm or dismiss it.'},
     {icon:Leaf,title:'Estimate with documented factors',text:'Road counts or equipment runtime can supply activity data. You provide power/fuel data and applicable emission factors. Formulas, units, sources and uncertainty remain attached.'},
-    {icon:FileText,title:'Notify & document',text:'Approved contacts produce an email preview by default. Optional Resend configuration enables actual sends. Download PDF or CSV from protected saved records.'},
+    {icon:FileText,title:'Notify & document',text:'Approved contacts receive alerts through the configured channels; email previews are the default. Download PDF or CSV from protected saved records.'},
   ];
   return <><Heading eyebrow="THE SEPARATE EXPLAINER" title="Understand what happens inside.">No hidden claims. Here is what this version does, where the models stop, and where you decide.</Heading><section className="how-intro"><div><Badge tone="hero-badge">HUMAN-CONFIRMED MONITORING</Badge><h2>Language sets the intention.<br/>Rules trigger the observation.<br/><span>People make the decision.</span></h2></div><div className="how-orbit"><Camera size={48}/><span>VIDEO → EVIDENCE</span></div></section><div className="how-steps">{steps.map(({icon:Icon,title,text},i)=><section className="panel how-step" key={title}><div className="how-step-top"><span className="stat-icon mint"><Icon size={22}/></span><span>0{i+1}</span></div><h2>{title}</h2><p>{text}</p></section>)}</div><section className="panel section-gap"><div className="panel-heading"><div><h2>What is available—and what is not</h2><p>The product vision is larger than this first build.</p></div><ShieldCheck size={23}/></div><div className="capability-table"><div><strong>Capability</strong><strong>This version</strong></div>{[
-      ['People in a confirmed zone','Real detector + tracking + dwell rule; footage validation still required'],['Vehicle counting','Real class counts and two line-side directions; camera calibration still required'],['Machine operation','Experimental visible-motion proxy or operator-supplied activity; not true on/off sensing'],['Plain-English rules','Constrained local parser; not a preview-inspecting vision agent'],['AI evidence review','Optional consent-gated NVIDIA or local interpretation of sampled video and incident frames'],['Possible fights and falls','Pose classifier with a separately installed checkpoint and operator review'],['PPE / crowd / exit obstruction','Dedicated models are required'],['Live cameras & health alerts','Optional backend RTSP capture to short clips and browser recording; no low-latency alerts or uptime watchdog'],['Email delivery','Preview by default; optional Resend sending, no delivery webhooks'],['Hosting','Laptop primary; optional temporary Colab launcher, no uptime guarantee'],['Safety certification / emissions compliance','Neither claimed nor established'],
+      ['People in a confirmed zone','Real detector + tracking + dwell rule; footage validation still required'],['Vehicle counting','Real class counts from a two-point line or two-gate segment; camera counting uses one line and asks for road distance at carbon time. Camera calibration still required'],['Machine operation','Experimental visible-motion proxy or operator-supplied activity; not true on/off sensing'],['Plain-English rules','Constrained local parser; not a preview-inspecting vision agent'],['AI evidence review','Optional consent-gated NVIDIA or local interpretation of sampled video and incident frames'],['Possible fights and falls','Pose classifier with a separately installed checkpoint and operator review'],['PPE / crowd / exit obstruction','Dedicated models are required'],['Live cameras & health alerts','Saved YouTube inputs and optional RTSP/HLS capture to short clips; sampled YOLO preview; point-in-time health checks. No low-latency uptime watchdog'],['Email delivery','Preview by default; optional Resend sending, no delivery webhooks'],['Hosting','Laptop primary; optional temporary Colab launcher, no uptime guarantee'],['Safety certification / emissions compliance','Neither claimed nor established'],
     ].map(([a,b])=><div key={a}><strong>{a}</strong><span>{b}</span></div>)}</div></section></>;
 }
 
@@ -1132,7 +1170,7 @@ function Settings({data,connected,notify,refresh}:Props) {
     <DemoSetup status={data.status} connected={connected}/>
     {connected&&<section className="panel section-gap">
       <div className="panel-heading"><div><h2>Analysis models</h2><p>Used by the connected analysis worker.</p></div><Cpu size={22}/></div>
-      <div className="health-row"><span>Traffic and CO₂</span><span>{models?.traffic.detector || 'YOLOv8 Nano'} · {models?.traffic.tracker || 'ByteTrack'} · class emission factors</span></div>
+      <div className="health-row"><span>Zone, live preview & traffic</span><span>{models?.traffic.detector || 'YOLO26 Nano'} · {models?.traffic.tracker || 'ByteTrack'} · class emission factors</span></div>
       <div className="health-row"><span>Fight and fall</span><span>{models?.action.detector || 'YOLO11 Pose'} · {models?.action.checkpoint_present ? models.action.classifier : 'Checkpoint needed'}</span></div>
       {data.status?.is_admin&&(models?.action.upload_enabled ?? true)&&<label className="button secondary upload-button">
         <Upload size={16}/>{installing?'Validating checkpoint…':'Upload Colab action checkpoint'}<input type="file" accept=".pt" disabled={installing} onChange={e=>{void installModel(e.target.files?.[0]);e.target.value='';}}/>

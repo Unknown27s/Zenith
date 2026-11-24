@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Leaf } from 'lucide-react';
+import { ArrowUpRight, Leaf } from 'lucide-react';
 import { json } from './api';
 import type { SavedFactor } from './FactorLibrary';
 import type { CarbonEstimate, Run, SavedCamera } from './types';
+import { runLink, analysisModes } from './workflow';
 
 type VehicleClass = 'car' | 'motorcycle' | 'bus' | 'truck';
 const classes: VehicleClass[] = ['car', 'motorcycle', 'bus', 'truck'];
@@ -14,6 +15,8 @@ export default function CameraCarbon({camera, runs, connected, notify, refresh}:
   notify: (message: string) => void; refresh: () => void;
 }) {
   const trafficRuns = runs.filter(run => run.status === 'completed' && run.rule.capability === 'traffic');
+  const processingTraffic = runs.filter(run => (run.status === 'queued' || run.status === 'processing') && run.rule.capability === 'traffic');
+  const savedRule = camera.last_rule;
   const [runId, setRunId] = useState('');
   const [vehicleClass, setVehicleClass] = useState<VehicleClass>('car');
   const [references, setReferences] = useState<ReferenceFactor[]>([]);
@@ -106,10 +109,24 @@ export default function CameraCarbon({camera, runs, connected, notify, refresh}:
     }
   }
 
-  return <section className="panel camera-carbon">
+  return <section className="panel camera-carbon" id="camera-carbon">
     <div className="panel-heading"><div><h2><Leaf size={18}/> Carbon from this camera</h2>
       <p>Estimate road CO₂ from saved vehicle counts for {camera.name}. Counts belong to one completed clip, not a continuous total.</p></div></div>
-    {!trafficRuns.length ? <p className="info-note">No completed traffic analyses yet. Set <strong>Monitoring type</strong> to Traffic, draw the road gates, then start a stream analysis. When a clip completes, its saved counts appear here.</p> :
+    {!trafficRuns.length ? <div className="info-note">
+      {!savedRule ? <>
+        <strong>No rule is saved for this camera yet.</strong>
+        <p>Set <strong>Monitoring type</strong> to <strong>Traffic & CO₂</strong>, save the rule, then start clip analysis. Carbon becomes available when a traffic clip completes.</p>
+      </> : savedRule.capability !== 'traffic' ? <>
+        <strong>This camera’s saved rule is {analysisModes[savedRule.capability]?.label || savedRule.capability}.</strong>
+        <p>Carbon needs vehicle counts. Change <strong>Monitoring type</strong> to <strong>Traffic & CO₂</strong> above, save the rule, then start clip analysis.</p>
+      </> : processingTraffic.length ? <>
+        <strong>{processingTraffic.length} traffic clip{processingTraffic.length === 1 ? ' is' : 's are'} still processing.</strong>
+        <p>Carbon becomes available when a clip completes. <a className="text-link" href="#videos">Open Video findings →</a></p>
+      </> : <>
+        <strong>The rule is Traffic & CO₂, but no clip has completed yet.</strong>
+        <p>Start clip analysis above and wait for the first clip to finish. <a className="text-link" href="#camera-rule">Open the incident rule ↑</a></p>
+      </>}
+    </div> :
       <form onSubmit={event => {event.preventDefault(); void submit(false);}}>
         <div className="form-grid">
           <label>Completed traffic analysis<select value={runId} onChange={event => setRunId(event.target.value)} required>
@@ -128,7 +145,8 @@ export default function CameraCarbon({camera, runs, connected, notify, refresh}:
           <div><dt>Count used by the server</dt><dd>{usedCount}</dd></div>
           <div><dt>Road segment</dt><dd>{selectedRun.rule.segment_metres ? `${selectedRun.rule.segment_metres} m` : 'Not stored'}</dd></div>
         </dl>}
-        {selectedRun && !selectedRun.rule.segment_metres && <label>Segment distance (km)<input type="number" min="0.000001" max="1000000" step="any" value={distanceKm} onChange={event => {setDistanceKm(event.target.value); setPreview(null);}} required/></label>}
+        {selectedRun && <p className="small-note">Raw counts stay unchanged. The server subtracts operator-reviewed false-positive crossings from this estimate. <a className="text-link" href={runLink(selectedRun)}>Review this run’s crossings <ArrowUpRight size={13}/></a></p>}
+        {selectedRun && !selectedRun.rule.segment_metres && <label>Road distance represented by this clip (km)<input type="number" min="0.000001" max="1000000" step="any" value={distanceKm} onChange={event => {setDistanceKm(event.target.value); setPreview(null);}} required/><span className="small-note">Camera counting uses one line, so the distance is not stored in the rule. Enter it here for this estimate.</span></label>}
         {selectedRun && usedCount === 0 && <p className="small-note">This class has no usable counts in the selected run. Choose another class or run before saving.</p>}
         <label>Factor<select value={choice} onChange={event => {setChoice(event.target.value); setPreview(null);}} required>
           <option value="">Choose a factor…</option>
@@ -146,13 +164,15 @@ export default function CameraCarbon({camera, runs, connected, notify, refresh}:
         </div>}
         <label>Activity basis & assumptions<textarea value={basis} maxLength={1000} onChange={event => {setBasis(event.target.value); setPreview(null);}} required/></label>
         <div className="action-row">
-          <button className="button primary" type="submit" disabled={!connected || busy || !selectedRun || !factorReady || usedCount === 0}><Leaf size={16}/>{busy ? 'Calculating…' : 'Preview carbon'}</button>
-          {preview && <button className="button secondary" type="button" disabled={!connected || busy} onClick={() => void submit(true)}>{busy ? 'Saving…' : 'Save to ledger'}</button>}
+          <button className="button primary" type="submit" disabled={!connected || busy || !selectedRun || !factorReady || usedCount === 0}><Leaf size={16}/>{busy ? 'Calculating…' : 'Preview carbon (not saved)'}</button>
+          {preview && <button className="button secondary" type="button" disabled={!connected || busy} onClick={() => void submit(true)}>{busy ? 'Saving…' : 'Save this preview to ledger'}</button>}
         </div>
         {error && <p className="error-text" role="alert">{error}</p>}
-        {preview && <div className="info-note workspace-estimate" role="status">
+        {preview && <div className="info-note workspace-estimate camera-carbon-preview" role="status" aria-live="polite">
+          <span className="badge warning">Preview only — not saved</span>
           <strong>{new Intl.NumberFormat('en-IN', {maximumFractionDigits: 8}).format(preview.kg)} kg CO₂</strong>
           <p>{preview.formula}</p><p>{preview.factor_source}</p><p>{preview.basis}</p>
+          <p className="small-note">Saving commits this exact server calculation to the activity ledger.</p>
         </div>}
       </form>}
   </section>;

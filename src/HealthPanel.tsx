@@ -8,7 +8,7 @@ type CheckResult = {state: CheckState; detail: string};
 type CheckId = 'api' | 'database' | 'worker' | 'storage' | 'vision' | 'telegram' | 'stream' | 'action';
 const labels: Record<CheckId, string> = {
   api: 'Backend API', database: 'Database', worker: 'Analysis worker', storage: 'Clip storage capacity',
-  vision: 'Jev / vision provider', telegram: 'Telegram bot', stream: 'YouTube / camera stream', action: 'Fight & fall model',
+  vision: 'Vision review provider', telegram: 'Telegram bot', stream: 'YouTube / camera stream', action: 'Fight & fall model',
 };
 const stateLabels: Record<CheckState, string> = {
   pass: 'Passed', warning: 'Needs attention', fail: 'Failed', unchecked: 'Not tested', checking: 'Checking…',
@@ -22,7 +22,7 @@ function snapshot(status: Status | null): Record<CheckId, CheckResult> {
     database: unchecked('Run checks to query the application database.'),
     worker: unchecked('Run checks to inspect the worker heartbeat.'),
     storage: unchecked('Run checks to compare recorded clip usage against the storage quota.'),
-    vision: unchecked(status?.vision?.configured ? `${status.vision.model} configured; connection not tested.` : 'Optional. Configure Jev, NVIDIA or a local model on the backend.'),
+    vision: unchecked(status?.vision?.configured ? `${status.vision.model} configured; connection not tested.` : 'Optional. Configure NVIDIA, TypeSafe or a local vision model on the backend.'),
     telegram: unchecked(status?.channels?.telegram.configured ? 'Configured; bot connection not tested.' : 'Optional. Configure your bot token and approved chat IDs on the backend.'),
     stream: unchecked(status?.camera?.configured ? `${status.camera.protocol} configured; frame access not tested.` : 'Configure a permissioned YouTube live, RTSP or HLS input on the backend.'),
     action: unchecked('A separate action checkpoint is required for possible fights and falls.'),

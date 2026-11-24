@@ -46,15 +46,15 @@ and Telegram. Jev is not required for detection or sending notifications.
 3. On the separate camera page, confirm permission and **Start YOLO preview**.
    Same-frame person/vehicle boxes appear on a sampled stream (at most 2 FPS).
    This preview does **not** trigger alerts.
-4. In the camera's incident-rule section choose **Zone monitoring**, set duration,
-   select your Telegram recipient and cooldown, then **Preview stream** and draw
-   that camera's zone. Different cameras can use different rules and recipients.
-5. If using Jev, explicitly consent to sharing incident evidence for this stream
-   session. Confirm the preview, settings and recipients, then start stream analysis.
+4. In the camera's **Incident rule & clip analysis** section choose **Zone monitoring**,
+   set duration, select your Telegram recipient and cooldown, then **Get preview frame**
+   and draw that camera's zone. Different cameras can use different rules and recipients.
+5. If using vision review, explicitly consent to sharing incident evidence for this
+   stream session. Confirm the preview, settings and recipients, then **Start clip analysis**.
 6. Actual rule-triggered incidents appear with evidence; the existing outbox sends
    Telegram alerts, with a saved image only when `TELEGRAM_SEND_EVIDENCE=true`.
-7. Optional Jev review runs separately after clip analysis. Inspect its decision in
-   the incident review. Alerts do **not** wait for Jev and are not suppressed by it.
+7. Optional vision review runs separately after clip analysis. Inspect its decision in
+   the incident review. Alerts do **not** wait for vision review and are not suppressed by it.
 8. Stop both the YOLO preview and rule capture when the demonstration ends.
 
 Up to six camera inputs can be saved per workspace; three bounded captures and

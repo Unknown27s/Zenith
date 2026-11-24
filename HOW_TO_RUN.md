@@ -46,8 +46,8 @@ Open **Demo Footage** in the sidebar. Three actual short source excerpts are inc
 
 | Example | Duration | Analysis |
 |---|---:|---|
-| People crossing a street | 3.67 s | YOLOv8 Nano + ByteTrack; person-only demonstration zone/dwell rule |
-| Vehicles at an interchange | 12 s | YOLOv8 Nano + ByteTrack; selected vehicle classes and a finite crossing line |
+| People crossing a street | 3.67 s | YOLO26 Nano + ByteTrack; person-only demonstration zone/dwell rule |
+| Vehicles at an interchange | 12 s | YOLO26 Nano + ByteTrack; selected vehicle classes and a finite crossing line |
 | A screw conveyor | 5.8 s | OpenCV region-motion proxy; **not** electrical ON/OFF recognition |
 
 Each card has playback, download, source credit/license and **Use in studio**. The source footage is not pre-generated detection output. Credits and adaptation terms are in `public/examples/ATTRIBUTION.md` and accompany the public assets. The people clip depicts normal street activity; a region you draw is a fictional demo zone, not evidence of an actual access violation.
@@ -66,9 +66,9 @@ You can also upload permitted MP4/MOV/AVI/MKV/WebM clips (default 100 MB / 180 s
 
 ### Saved YouTube cameras and per-camera rules
 
-Open **Cameras & live streams**, add a permitted YouTube livestream, then **Open camera & rule**. Each camera has its own **Incident rule for this camera** panel: monitoring type, rule name, sustained duration, cooldown, advanced detector settings, notification recipients, and the road/zone geometry drawn on that camera's own preview. Changing these fields affects only that camera. Click **Save rule** to store the rule without starting capture; **Start stream analysis** also stores it. A saved camera never auto-resumes after a restart.
+Open **Cameras & live streams**, add a permitted YouTube livestream, then **Open camera & rule**. The page starts with an optional **live detection preview**: sampled boxes that create no clips, counts, findings or alerts. Each camera has its own **Incident rule & clip analysis** panel: monitoring type, rule name, sustained duration, cooldown, advanced detector settings, notification recipients, and the road/zone geometry drawn on that camera's own preview. Changing these fields affects only that camera. Click **Save rule** to store the rule without starting capture; **Start clip analysis** also stores it and begins recording short clips. A saved camera never auto-resumes after a restart. The **What is happening on this camera** checklist and **Next step** line show what is saved, running or still missing.
 
-When a traffic camera completes a clip, **Carbon from this camera** appears below its rule. Choose the completed run, vehicle class and a published or saved class-specific factor; the server uses that run's saved counts and road-segment distance, and excludes operator-reviewed false-positive crossings. Preview shows the formula and source before you save to the ledger. Counts are per clip, not a continuous total, and preview boxes alone do not create counts.
+When a traffic camera completes a clip, **Carbon from this camera** appears below its rule. Choose the completed run, vehicle class and a published or saved class-specific factor; the server uses that run's saved counts and excludes operator-reviewed false-positive crossings. Camera counting uses one line, so enter the road distance represented by that clip in the carbon panel. Preview shows the formula and source before you save to the ledger. Counts are per clip, not a continuous total, and preview boxes alone do not create counts. Until a traffic clip completes, the panel names the actual blocker: no saved rule, a non-traffic rule, a clip still processing, or no completed clip.
 
 ## Carbon and machine ON/OFF
 
@@ -96,7 +96,7 @@ Alternatively use `ZENITH_CAMERA_URL=https://YOUR_PERMISSIONED_STREAM/playlist.m
 
 For a no-credential **prerecorded test** (not CCTV), use `ZENITH_CAMERA_URL=https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8` temporarily, or run `python scripts/smoke_stream.py` to test it against an isolated temporary database. The sample is [Big Buck Bunny](https://peach.blender.org/), © Blender Foundation, CC BY 3.0, hosted by Mux for HLS playback testing. It is not packaged as a Zenith example, and it cannot validate camera uptime or traffic counting. Remove the URL or set your own permitted stream after testing.
 
-Restart API and worker. In Studio, click **Preview stream** (requires access to your stream), check the visible rule geometry, describe one supported rule, confirm it, then click **Start stream analysis**. It records approximately 12-second clips for queued worker analysis; stop from Studio when done. The recording and queue stop at 30 source clips, three pending jobs, or the per-operator source storage limit. A failed connection retries with capped backoff from five seconds up to 60 seconds. There are no low-latency alerts, automatic deletion, distributed leader election, or validated camera reconnect guarantees. One API process and one network stream are supported; the backend-only URL is never returned in API responses. The existing browser webcam can still record short clips without network setup.
+Restart API and worker. In Studio, click **Get preview frame** (requires access to your stream), check the visible rule geometry, describe one supported rule, confirm it, then click **Start clip analysis**. It records approximately 12-second clips for queued worker analysis; stop from Studio when done. The recording and queue stop at 30 source clips, three pending jobs, or the per-operator source storage limit. A failed connection retries with capped backoff from five seconds up to 60 seconds. There are no low-latency alerts, automatic deletion, distributed leader election, or validated camera reconnect guarantees. One API process and one network stream are supported; the backend-only URL is never returned in API responses. The existing browser webcam can still record short clips without network setup.
 
 ## Separate laptop operator keys and backup
 
@@ -133,7 +133,7 @@ VISION_PROVIDER=nvidia
 VISION_SEND_TO_THIRD_PARTY=false
 ```
 
-Get an API Catalog key at https://build.nvidia.com/ from an image-capable model's **Get API Key** option. No `VITE_` or `NEXT_PUBLIC_` prefix for this secret. Restart the API and worker, then use **Settings → Check model connection** to check access without sending images. To enable hosted review, set `VISION_SEND_TO_THIRD_PARTY=true` on the backend and restart; the operator must separately consent on each run or incident. Do not enable this for footage without sharing permission. Local YOLO works without the key. A vision LLM does not replace timestamps, tracking, event rules or sourced carbon calculations. See `docs/VISION_API.md`.
+Get an API Catalog key at https://build.nvidia.com/ from an image-capable model's **Get API Key** option. No `VITE_` or `NEXT_PUBLIC_` prefix for this secret. Restart the API and worker, then use **Settings → Run health checks** to check access without sending images. To enable hosted review, set `VISION_SEND_TO_THIRD_PARTY=true` on the backend and restart; the operator must separately consent on each run or incident. Do not enable this for footage without sharing permission. Local YOLO works without the key. A vision LLM does not replace timestamps, tracking, event rules or sourced carbon calculations. See `docs/VISION_API.md`.
 
 `GET /api/health` checks only that the API process responds; `GET /api/ready` checks that the configured application database and its tables are reachable (HTTP 503 if not). The Settings page separately shows database and worker state. A Supabase project URL and publishable key are **not** `DATABASE_URL`; use the private PostgreSQL connection string described above. Never place it in the browser.
 

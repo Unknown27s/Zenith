@@ -3,7 +3,7 @@ import type { Status } from './types';
 
 export default function DemoSetup({status, connected}: {status: Status | null; connected: boolean}) {
   return <section className="panel demo-setup section-gap">
-    <div className="panel-heading"><div><h2>YouTube + Jev + Telegram setup</h2>
+    <div className="panel-heading"><div><h2>YouTube + vision review + Telegram setup</h2>
       <p>Server-side configuration stays private. The dashboard controls preview, rules, consent and tests.</p></div></div>
     <div className="demo-setup-grid">
       <article><Camera size={21}/><h3>1. Connect a stream</h3>
@@ -11,10 +11,10 @@ export default function DemoSetup({status, connected}: {status: Status | null; c
         <a className="text-link" href="#cameras">Add cameras & open previews →</a>
         <p>For credentialed RTSP/HLS input, backend environment configuration and Studio controls remain available.</p>
       </article>
-      <article><Cpu size={21}/><h3>2. Optional Jev review</h3>
-        <p>{connected && status?.vision?.configured ? `${status.vision.provider} · ${status.vision.model}` : 'YOLO triggers work without a vision provider. Enable Jev for advisory evidence decisions.'}</p>
+      <article><Cpu size={21}/><h3>2. Optional vision review</h3>
+        <p>{connected && status?.vision?.configured ? `${status.vision.provider} · ${status.vision.model}` : 'YOLO triggers work without a vision provider. Enable vision review for advisory evidence decisions.'}</p>
         <pre><code>{'VISION_PROVIDER=typesafe\nTYPESAFE_API_KEY=your_private_key\nTYPESAFE_MODEL=jev-1.14.0\nVISION_SEND_TO_THIRD_PARTY=true\nVISION_MAX_FRAMES=3'}</code></pre>
-        <p>Restart API and worker. Explicitly approve evidence sharing before starting stream analysis. Jev image support is experimental; it never suppresses the original alert.</p>
+        <p>Restart API and worker. Explicitly approve evidence sharing before starting stream analysis. Hosted image review is experimental; it never suppresses the original alert.</p>
       </article>
       <article><Send size={21}/><h3>3. Enable Telegram alerts</h3>
         <p>{connected && status?.channels?.telegram.configured ? `${status.channels.telegram.chats} chat(s) approved · evidence photos ${status.channels.telegram.evidence ? 'enabled' : 'off'}.` : 'Create a bot with @BotFather, then press Start in each approved chat.'}</p>

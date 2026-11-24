@@ -18,3 +18,29 @@ export function runStatus(run: Run) {
   if (run.status === 'failed') return 'Failed';
   return run.status;
 }
+
+/** Plain-language labels for saved-camera capture states from the backend. */
+export function cameraClipState(state: string) {
+  if (state === 'capturing') return 'Recording clips';
+  if (state === 'connecting') return 'Connecting to stream';
+  if (state === 'reconnecting') return 'Reconnecting to stream';
+  if (state === 'stopping') return 'Stopping clip capture';
+  if (state === 'stopped' || !state) return 'Not capturing clips';
+  if (state === 'capture failed') return 'Clip capture failed — check stream access';
+  if (state === 'waiting for analysis capacity') return 'Waiting for the analysis worker';
+  if (state.startsWith('storage or source limit')) return 'Storage or source limit reached — archive clips before restarting';
+  if (state === 'in use by another operator') return 'In use by another operator';
+  return state;
+}
+
+/** Plain-language labels for the optional live YOLO preview. */
+export function cameraPreviewState(state: string) {
+  if (state === 'loading model') return 'Loading detector';
+  if (state === 'connecting') return 'Connecting to stream';
+  if (state === 'reconnecting') return 'Reconnecting to stream';
+  if (state === 'stream unavailable; reconnecting') return 'Stream unavailable — reconnecting';
+  if (state === 'preview failed; check model installation and stream access') return 'Preview failed';
+  if (state === 'stopping') return 'Stopping preview';
+  if (state === 'stopped' || !state) return 'Preview stopped';
+  return state;
+}

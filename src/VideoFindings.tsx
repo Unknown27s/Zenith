@@ -428,7 +428,7 @@ function SourceCard({
         <div>
           <h2>{source.name}</h2>
           <p>
-            {source.duration.toFixed(1)}s · {source.input_type === 'sample' ? 'Packaged example' : 'Uploaded clip'} ·{' '}
+            {source.duration.toFixed(1)}s · {source.input_type === 'sample' ? 'Packaged example' : source.camera_id ? 'Saved camera clip' : 'Uploaded clip'} ·{' '}
             {plural(runs.length, 'analysis run')}
           </p>
         </div>

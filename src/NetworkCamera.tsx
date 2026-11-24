@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { json, request } from './api';
 import type { DetectorOptions, Point, Rule, Status, VisionStatus } from './types';
+import { cameraClipState } from './workflow';
 
 export type StreamRule = Omit<Rule, 'points' | 'confirmed'> & DetectorOptions;
 
@@ -81,16 +82,18 @@ export default function NetworkCamera({camera, rule, vision, workerOnline, actio
   }
 
   return <section className="camera-capture network-camera" aria-label="Network stream analysis">
-    <h3>Network stream · {camera.protocol || 'YouTube / RTSP / HLS'}</h3>
+    <h3>Incident rule & clip analysis · {camera.protocol || 'YouTube / RTSP / HLS'}</h3>
     {!camera.configured&&<p className="info-note">No network source configured. Set <code>ZENITH_YOUTUBE_URL</code>, <code>ZENITH_CAMERA_URL</code> or <code>ZENITH_RTSP_URL</code> in the private backend environment and restart. <a className="text-link" href="#settings">Open health checks & setup →</a></p>}
-    <p className="small-note">Records short clips ({camera.clip_seconds ?? 5}s for counting; longer when the dwell setting needs it) for the selected detector, action model or motion proxy. This is not a live annotated feed: tracking resets per clip, and capture/queue gaps can miss events. YouTube adds playback delay. AI review is optional; Telegram evidence sharing is configured separately on the backend.</p>
-    <p role="status">Stream: {camera.state}{camera.last_clip_at ? ` · last clip ${new Date(camera.last_clip_at * 1000).toLocaleString()}` : ''}</p>
+    <p className="small-note">Records short clips ({camera.clip_seconds ?? 5}s for counting; longer when the dwell setting needs it) for the selected detector, action model or motion proxy. This is not a live annotated feed: use the optional preview above for boxes. Tracking resets per clip, and capture/queue gaps can miss events. YouTube adds playback delay. AI review is optional; Telegram evidence sharing is configured separately on the backend.</p>
+    <p className="camera-rule-progress" aria-hidden="true"><span className={preview ? 'done' : ''}>1 · Preview frame</span><span className={confirmed ? 'done' : ''}>2 · Draw & review</span><span>3 · Save or start</span></p>
+    <p role="status"><strong>Clip analysis:</strong> {cameraClipState(camera.state)}{camera.last_clip_at ? ` · last clip ${new Date(camera.last_clip_at * 1000).toLocaleString()}` : ''}</p>
     <div className="action-row">
-      <button type="button" className="button secondary" disabled={!connected || !camera.configured || busy} onClick={() => void loadPreview()}>Preview stream</button>
-      {saveEndpoint && <button type="button" className="button secondary" disabled={!connected || busy || saving || !confirmed || !enough || !rule.name.trim()} onClick={() => void saveRule()}>{saving ? 'Saving…' : 'Save rule'}</button>}
-      <button type="button" className="button primary" disabled={!connected || !camera.configured || busy || !workerOnline || !preview || !confirmed || !enough || !rule.name.trim() || !restartable} onClick={() => void control('start')}>Start stream analysis</button>
-      <button type="button" className="button secondary" disabled={!connected || busy || restartable || camera.state === 'in use by another operator'} onClick={() => void control('stop')}>Stop stream</button>
+      <button type="button" className="button secondary" disabled={!connected || !camera.configured || busy} onClick={() => void loadPreview()}>{preview ? 'Refresh preview frame' : '1 · Get preview frame'}</button>
+      {saveEndpoint && <button type="button" className="button secondary" disabled={!connected || busy || saving || !confirmed || !enough || !rule.name.trim()} onClick={() => void saveRule()}>{saving ? 'Saving rule…' : '2 · Save rule'}</button>}
+      <button type="button" className="button primary" disabled={!connected || !camera.configured || busy || !workerOnline || !preview || !confirmed || !enough || !rule.name.trim() || !restartable} onClick={() => void control('start')}>3 · Start clip analysis</button>
+      <button type="button" className="button secondary" disabled={!connected || busy || restartable || camera.state === 'in use by another operator'} onClick={() => void control('stop')}>Stop clip analysis</button>
     </div>
+    <p className="small-note">Save rule stores this rule without starting capture. Start clip analysis stores it and records short clips for the worker; findings appear in Video findings.</p>
     {preview && <>
       <div className="video-stage rtsp-preview"><img src={preview} alt="Current network stream frame"/>
         {!action&&<svg className="geometry" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Click to draw stream geometry" onClick={event => {
@@ -116,7 +119,7 @@ export default function NetworkCamera({camera, rule, vision, workerOnline, actio
       {vision&&<label className="checkbox"><input type="checkbox" checked={review} disabled={!vision.available} onChange={event=>setReview(event.target.checked)}/>
         {vision.available
           ? <>{vision.provider==='local'?'Review saved incident evidence with the local model.':
-              `I have permission to send incident evidence from this stream session to ${vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'}.`}
+              `I have permission to send incident evidence from this stream session to ${vision.provider==='typesafe'?'TypeSafe (experimental image review)':'NVIDIA'}.`}
               {' '}Up to {vision.auto_limit} incidents per clip. Advisory only; alerts do not wait for review.</>
           : `Vision review is configured but not available: ${vision.detail||'check Settings'}.`}
       </label>}

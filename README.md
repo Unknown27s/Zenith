@@ -57,14 +57,14 @@ The commands above intentionally install CPU PyTorch. For a laptop NVIDIA GPU, c
 - **Reports:** PDF with available evidence and CSV; workspace or single-run scope.
 - **How It Works:** separate explainer option, including actual limitations.
 - **Health & settings:** local/Colab backend selection, independent connection checks,
-  worker heartbeat, Jev/model access, Telegram bot testing, explicit stream-frame and
+  worker heartbeat, vision-model access, Telegram bot testing, explicit stream-frame and
   Telegram-message tests, and private-backend demo setup guidance.
 
-For a laptop-only RTSP/IP camera or permissioned HTTPS HLS stream, set `ZENITH_RTSP_URL` or `ZENITH_CAMERA_URL` in the backend environment and restart, then use **Studio → Preview stream → Start stream analysis** with a confirmed rule. This opt-in, single-process connector captures bounded clips for delayed analysis; it is not an always-on alerting service. Browser webcam recording remains available without network setup. See [HOW_TO_RUN.md](HOW_TO_RUN.md) for source/storage limits and privacy precautions.
+For a laptop-only RTSP/IP camera or permissioned HTTPS HLS stream, set `ZENITH_RTSP_URL` or `ZENITH_CAMERA_URL` in the backend environment and restart, then use **Studio → Get preview frame → Start clip analysis** with a confirmed rule. This opt-in, single-process connector captures bounded clips for delayed analysis; it is not an always-on alerting service. Browser webcam recording remains available without network setup. See [HOW_TO_RUN.md](HOW_TO_RUN.md) for source/storage limits and privacy precautions.
 
 For a permissioned **YouTube livestream → YOLO trigger → Telegram** demo, see
-[YouTube + optional TypeSafe Jev setup](docs/YOUTUBE_JEV_DEMO.md). Jev image decisions
-are experimental advisory reviews, not required for alerting.
+[YouTube + optional TypeSafe vision setup](docs/YOUTUBE_JEV_DEMO.md). Hosted image reviews
+are experimental advisory checks, not required for alerting.
 
 The administrator can issue separate local operator keys in Settings; source and report access are scoped by key. Once any key is issued, automatic local sessions are disabled. Saved site factors keep region, year, class and citation; server-side calculations use the saved value. Stop services and run `scripts/backup_local.py` for an offline sensitive database/media archive. This local key scheme, backup script and bounded capture do **not** constitute public production multi-tenancy or an uptime guarantee.
 
