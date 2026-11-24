@@ -77,6 +77,11 @@ LOCAL_VLM_MODEL = os.getenv('LOCAL_VLM_MODEL', 'qwen2.5vl:3b').strip()
 LOCAL_VLM_API_KEY = os.getenv('LOCAL_VLM_API_KEY', '').strip()
 VISION_SEND_TO_THIRD_PARTY = os.getenv('VISION_SEND_TO_THIRD_PARTY', 'false').lower() == 'true'
 VISION_TIMEOUT = int(os.getenv('VISION_TIMEOUT', '30'))
+try:
+    PROPOSAL_TIMEOUT = int(os.getenv('ZENITH_PROPOSAL_TIMEOUT', '60'))
+except ValueError as error:
+    raise RuntimeError('ZENITH_PROPOSAL_TIMEOUT must be a number of seconds') from error
+PROPOSAL_TIMEOUT = max(5, min(180, PROPOSAL_TIMEOUT))
 VISION_MAX_FRAMES = int(os.getenv('VISION_MAX_FRAMES', '1'))
 VISION_AUTO_LIMIT = 3
 

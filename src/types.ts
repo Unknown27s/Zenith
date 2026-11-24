@@ -4,6 +4,7 @@ export type Capability = 'zone' | 'traffic' | 'machine_activity' | 'action';
 export interface DetectorOptions { confidence: number; image_size: 416 | 640 | 960 | 1280; iou_threshold: number; analysis_fps: number; vehicle_classes: ('car' | 'motorcycle' | 'bus' | 'truck')[] }
 export interface Source { id: string; name: string; duration: number; width: number; height: number; input_type: string; example_id?: string; camera_id?: string; camera_name?: string; created: number }
 export interface Rule { capability: Capability; name: string; instruction: string; points: Point[]; segment_metres?: number | null; action_confidence?: number; dwell_seconds: number; motion_threshold: number; recipients: string[]; alert_cooldown_seconds: number; recipient?: string; confirmed: true }
+export interface RuleProposal { capability: Capability; name?: string; instruction?: string; points?: Point[]; dwell_seconds: number; confidence?: number; image_size?: DetectorOptions['image_size']; iou_threshold?: number; analysis_fps?: number; vehicle_classes?: DetectorOptions['vehicle_classes']; motion_threshold?: number; action_confidence?: number; rationale?: string; uncertainties?: string[]; parser?: string; model?: string; warnings?: string[] }
 export interface Crossing {
   source_seconds: number;
   track_id: number;
@@ -53,7 +54,8 @@ export interface Status {
   worker_online: boolean;
   worker_age_seconds: number | null;
   email_mode: string;
-  channels?: {email: string; telegram: {configured: boolean; chats: number; evidence?: boolean}};
+  channels?: {email: string; telegram: {configured: boolean; chats: number; evidence?: boolean; car_photos?: boolean}};
+  preferences?: {telegram_car_photos: boolean};
   ai_review: string;
   vision?: VisionStatus;
   recipients: string[];
@@ -64,4 +66,4 @@ export interface Status {
 export interface Data { status: Status | null; sources: Source[]; runs: Run[]; events: Incident[]; carbon: CarbonEntry[]; notifications: Notification[] }
 export type CameraHealth = NonNullable<Status['camera']> & {active?: boolean};
 export interface LivePreviewStatus {state: string; active: boolean; captured_at?: number | null; predicted_at?: number | null; detections?: number; model?: string; max_fps?: number}
-export interface SavedCamera {id: string; name: string; url: string; health: CameraHealth; live: LivePreviewStatus; last_rule?: Rule & DetectorOptions}
+export interface SavedCamera {id: string; name: string; url: string; protocol?: string | null; health: CameraHealth; live: LivePreviewStatus; last_rule?: Rule & DetectorOptions}

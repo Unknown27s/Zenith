@@ -45,7 +45,7 @@ export default function CamerasPage({data, connected, refresh, notify, selectedI
       const saved = await json<SavedCamera>('/cameras', {method: 'POST', body: JSON.stringify({name: name.trim(), url: url.trim()})});
       setName(''); setUrl(''); setPermission(false); update();
       window.location.hash = `cameras/${saved.id}`;
-      notify('YouTube input saved. Open its preview and confirm its own monitoring rule.');
+      notify('Camera input saved. Open its preview and confirm its own monitoring rule.');
     } catch (failure) { setError((failure as Error).message); }
     finally { setBusy(false); }
   }
@@ -66,19 +66,19 @@ export default function CamerasPage({data, connected, refresh, notify, selectedI
   </>;
   return <>
     <div className="heading"><div><div className="eyebrow">MULTI-INPUT DEMO</div><h1>Cameras & live streams</h1>
-      <p>Paste YouTube URLs here. Each camera keeps its own incident rule and carbon estimate.</p></div></div>
+      <p>Add a YouTube live link or a direct HTTPS HLS (.m3u8) stream. Each camera keeps its own incident rule and carbon estimate.</p></div></div>
     {connected && !supported && <BackendUpdateRequired/>}
-    <section className="panel camera-add"><h2><Plus size={18}/> Add YouTube camera input</h2>
+    <section className="panel camera-add"><h2><Plus size={18}/> Add camera input</h2>
       <form onSubmit={event => void add(event)}>
         <div className="form-grid"><label>Camera name<input value={name} maxLength={80} required placeholder="Entrance · Camera 01" onChange={event => setName(event.target.value)}/></label>
-          <label>YouTube livestream URL<input type="url" value={url} maxLength={2048} required placeholder="https://www.youtube.com/watch?v=…" onChange={event => setUrl(event.target.value)}/></label></div>
+          <label>Stream URL<input type="url" value={url} maxLength={2048} required placeholder="https://camera.example/live/stream.m3u8 or https://www.youtube.com/watch?v=…" onChange={event => setUrl(event.target.value)}/></label></div>
         <label className="checkbox"><input type="checkbox" checked={permission} onChange={event => setPermission(event.target.checked)}/>I have permission to process this stream and share evidence with the selected alert recipients.</label>
         <button className="button primary" disabled={!connected || !supported || busy || !permission || !name.trim() || !url.trim()}><Plus size={16}/>{busy ? 'Saving…' : 'Save camera & open'}</button>
       </form>
       {error && <p className="error-text" role="alert">{error}</p>}
       <p className="small-note">Six saved inputs per workspace; up to three bounded clip captures and two sampled YOLO previews on this backend.
         All inputs share one analysis worker and the workspace queue/storage limits. Saved inputs survive restart; capture never auto-resumes.
-        RTSP/HLS credentials remain backend-configured in Studio for now.</p>
+        Accepted inputs are YouTube watch/live pages and direct HTTPS .m3u8 manifests without embedded credentials. Server-side RTSP remains available through the backend environment.</p>
     </section>
     <div className="saved-camera-grid">{cameras.map(camera => {
       const runs = runsForCamera(camera, data);
@@ -99,7 +99,7 @@ export default function CamerasPage({data, connected, refresh, notify, selectedI
       const latest = camera.health.last_clip_at ? new Date(camera.health.last_clip_at*1000).toLocaleTimeString()
         : runs[0] ? `${new Date(runs[0].created*1000).toLocaleTimeString()} (analysed)` : 'None yet';
       return <article className="panel saved-camera-card" key={camera.id}>
-      <Camera size={24}/><h2>{camera.name}</h2><p>{camera.url}</p>
+      <Camera size={24}/><h2>{camera.name}</h2><p>{camera.protocol ? `${camera.protocol} · ` : ''}{displayStream(camera.url)}</p>
       <dl><div><dt>Incident rule</dt><dd>{ruleLabel}</dd></div>
         <div><dt>Clip analysis</dt><dd>{cameraClipState(camera.health.state)}</dd></div>
         <div><dt>Live preview</dt><dd>{cameraPreviewState(camera.live.state)}</dd></div>
@@ -109,15 +109,24 @@ export default function CamerasPage({data, connected, refresh, notify, selectedI
       <div className="action-row"><a className="button primary" href={`#cameras/${camera.id}`}>Open camera & rule →</a>
         <button className="button secondary" disabled={camera.health.active || camera.live.active} onClick={() => void remove(camera)} aria-label={`Remove ${camera.name}`}><Trash2 size={15}/></button></div>
     </article>;})}</div>
-    {!cameras.length && <section className="panel camera-empty"><Camera size={28}/><p>{connected ? 'Add your first permitted YouTube livestream above.' : 'Connect your backend in Health & settings to save camera inputs.'}</p></section>}
+    {!cameras.length && <section className="panel camera-empty"><Camera size={28}/><p>{connected ? 'Add your first permitted stream above.' : 'Connect your backend in Health & settings to save camera inputs.'}</p></section>}
   </>;
 }
 
 function BackendUpdateRequired() {
-  return <div className="connection-banner" role="alert"><div><strong>Backend update required—not a YouTube URL error.</strong>
+  return <div className="connection-banner" role="alert"><div><strong>Backend update required.</strong>
     <p>The running API does not support saved cameras yet. Stop your existing API/worker launcher with Ctrl+C,
       then run <code>python start.py</code> again using the same database/options as before. Refresh this dashboard afterward.
       Starting another copy without stopping the old one will leave port 8000 occupied.</p></div></div>;
+}
+
+function displayStream(value: string) {
+  try {
+    const url = new URL(value);
+    return `${url.host}${url.pathname}${url.search ? '?…' : ''}`;
+  } catch {
+    return value;
+  }
 }
 
 function runsForCamera(camera: SavedCamera, data: Data) {

@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #1F4E3D;
+  --color-on-primary: #FFFFFF;
+  --color-primary-container: #EAF3EC;
+  --color-on-primary-container: #023727;
+  --color-primary-border: #8FB896;
+  --color-secondary: #50625A;
+  --color-on-secondary: #FFFFFF;
+  --color-secondary-container: #D0E4D9;
+  --color-on-secondary-container: #23342C;
+  --color-background: #F9FAF6;
+  --color-on-background: #1A1C1B;
+  --color-surface: #F9FAF6;
+  --color-surface-container-lowest: #FFFFFF;
+  --color-surface-container-low: #F3F4F1;
+  --color-surface-container: #EDEEEB;
+  --color-surface-container-high: #E7E8E5;
+  --color-surface-variant: #EAF3EC;
+  --color-on-surface: #1A1C1B;
+  --color-on-surface-variant: #58605B;
+  --color-outline: #717974;
+  --color-outline-variant: #E2E3E0;
+  --color-success: #15803D;
+  --color-on-success: #FFFFFF;
+  --color-success-container: #DCFCE7;
+  --color-on-success-container: #14532D;
+  --color-warning: #B45309;
+  --color-on-warning: #FFFFFF;
+  --color-warning-container: #FEF3C7;
+  --color-on-warning-container: #78350F;
+  --color-error: #BA1A1A;
+  --color-on-error: #FFFFFF;
+  --color-error-container: #FFDAD6;
+  --color-on-error-container: #93000A;
+
+  --spacing-gutter-xs: 4px;
+  --spacing-gutter-sm: 8px;
+  --spacing-gutter-md: 12px;
+  --spacing-gutter-lg: 16px;
+  --spacing-gutter-xl: 24px;
+  --spacing-section: 32px;
+  --spacing-page-margin: 24px;
+
+  --font-display: "Wix Madefor Display", sans-serif;
+  --font-headline: "Wix Madefor Display", sans-serif;
+  --font-title: "Instrument Sans", sans-serif;
+  --font-body: "Instrument Sans", sans-serif;
+  --font-label: "Instrument Sans", sans-serif;
+  --font-mono: "Spline Sans Mono", monospace;
+
+  --text-display-lg: 36px;
+  --text-display-lg--line-height: 44px;
+  --text-display-lg--letter-spacing: -0.75px;
+
+  --text-headline-lg: 28px;
+  --text-headline-lg--line-height: 34px;
+  --text-headline-lg--letter-spacing: -0.5px;
+
+  --text-headline-md: 20px;
+  --text-headline-md--line-height: 28px;
+  --text-headline-md--letter-spacing: -0.25px;
+
+  --text-title-md: 16px;
+  --text-title-md--line-height: 24px;
+
+  --text-title-sm: 14px;
+  --text-title-sm--line-height: 20px;
+
+  --text-body-md: 14px;
+  --text-body-md--line-height: 21px;
+
+  --text-body-sm: 13px;
+  --text-body-sm--line-height: 19px;
+
+  --text-label-lg: 14px;
+  --text-label-lg--line-height: 20px;
+
+  --text-label-md: 12px;
+  --text-label-md--line-height: 16px;
+  --text-label-md--letter-spacing: 0.2px;
+
+  --text-label-sm: 12px;
+  --text-label-sm--line-height: 16px;
+  --text-label-sm--letter-spacing: 0.6px;
+
+  --text-mono-md: 13px;
+  --text-mono-md--line-height: 18px;
+
+  --text-mono-sm: 12px;
+  --text-mono-sm--line-height: 16px;
+}

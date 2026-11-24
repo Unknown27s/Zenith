@@ -21,8 +21,8 @@ from sqlalchemy import func, select, text
 from .config import ALL_RECIPIENTS, DATA, MAX_DURATION, MAX_UPLOAD, STORAGE_LIMIT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, TELEGRAM_SEND_EVIDENCE, TOKEN
 from .carbon_defaults import COMMON_FACTORS
 from .db import CameraInput, Carbon, EmissionFactor, Equipment, Incident, Notification, OperatorKey, Run, RunSummary, Session, Source, VisionReview, engine, init_db, serialize
-from .schemas import Action, CameraInputRequest, CameraRequest, CameraRuleRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, ProposalRequest, RunRequest, VisionReviewRequest
-from . import camera, vision, youtube, live_preview
+from .schemas import Action, CameraInputRequest, CameraRequest, CameraRuleRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, PreferencesRequest, ProposalRequest, RunRequest, VisionReviewRequest
+from . import camera, vision, live_preview, preferences, proposal, streams
 from .models import ACTION_UPLOAD, action_checkpoint, model_status
 from .alerts import telegram_probe, telegram_send
 
@@ -156,8 +156,10 @@ def status(identity=Depends(owner)):
     vision_status = vision.provider_status()
     with Session() as session:
         used = sum(row.payload.get('bytes', 0) for row in session.scalars(select(Source).where(Source.owner == identity)))
-        saved_cameras = [{'id': row.id, 'name': row.payload['name'], **camera.saved_status(row.id)}
+        saved_cameras = [{'id': row.id, 'name': row.payload['name'],
+                          **camera.saved_status(row.id, row.payload['url'])}
                          for row in session.scalars(select(CameraInput).where(CameraInput.owner == identity))]
+    stored_preferences = preferences.read()
     return {'database': database_readiness(), 'camera': camera.status(identity), 'is_admin': identity == hashlib.sha256(TOKEN.encode()).hexdigest(),
             'storage_used_mb': round(used / 1024**2, 1), 'storage_limit_mb': STORAGE_LIMIT // 1024**2,
             'saved_cameras': saved_cameras,
@@ -165,7 +167,8 @@ def status(identity=Depends(owner)):
             'worker_online': age is not None and age < 45, 'worker_age_seconds': age,
             'email_mode': 'configured' if os.getenv('RESEND_API_KEY') and os.getenv('ZENITH_FROM_EMAIL') else 'preview',
             'channels': {'email': 'configured' if os.getenv('RESEND_API_KEY') and os.getenv('ZENITH_FROM_EMAIL') else 'preview',
-                         'telegram': {'configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS), 'chats': len(TELEGRAM_CHAT_IDS), 'evidence': TELEGRAM_SEND_EVIDENCE}},
+                         'telegram': {'configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS), 'chats': len(TELEGRAM_CHAT_IDS), 'evidence': TELEGRAM_SEND_EVIDENCE, 'car_photos': stored_preferences['telegram_car_photos']}},
+            'preferences': stored_preferences,
             'ai_review': vision_status['provider'], 'vision': vision_status, 'recipients': ALL_RECIPIENTS, 'max_upload_mb': MAX_UPLOAD // (1024*1024),
             'max_video_seconds': MAX_DURATION, 'deployment': 'laptop operator-key workspaces',
             'capabilities': ['zone', 'traffic', 'machine_activity', 'action'], 'models': model_status()}
@@ -280,8 +283,25 @@ def preview_rtsp(identity=Depends(owner)):
         raise HTTPException(503, str(exc)) from exc
 
 
+@app.get('/api/preferences')
+def read_preferences(identity=Depends(owner)):
+    return {**preferences.read(),
+            'telegram_configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS),
+            'telegram_chats': len(TELEGRAM_CHAT_IDS)}
+
+
+@app.post('/api/preferences')
+def update_preferences(body: PreferencesRequest, identity=Depends(administrator)):
+    if body.telegram_car_photos and not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS):
+        raise HTTPException(409, 'Configure TELEGRAM_BOT_TOKEN and ZENITH_TELEGRAM_CHATS on the backend before enabling Telegram photos')
+    return {**preferences.write(telegram_car_photos=body.telegram_car_photos),
+            'telegram_configured': bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS),
+            'telegram_chats': len(TELEGRAM_CHAT_IDS)}
+
+
 def camera_input_view(row):
-    return {**serialize(row), 'health': camera.saved_status(row.id), 'live': live_preview.status(row.id)}
+    return {**serialize(row), 'protocol': streams.protocol(row.payload['url']),
+            'health': camera.saved_status(row.id, row.payload['url']), 'live': live_preview.status(row.id)}
 
 
 @app.get('/api/cameras')
@@ -293,9 +313,9 @@ def camera_inputs(identity=Depends(owner)):
 
 @app.post('/api/cameras', status_code=201)
 def add_camera_input(body: CameraInputRequest, identity=Depends(owner)):
-    canonical = youtube.video_url(body.url.strip())
+    canonical = streams.canonical(body.url)
     if not canonical:
-        raise HTTPException(400, 'Paste an HTTPS YouTube watch/live video link. Arbitrary network URLs are not accepted from the browser.')
+        raise HTTPException(400, 'Paste an HTTPS HLS .m3u8 link or a YouTube watch/live link. Other network URLs are not accepted from the browser.')
     with Session() as session:
         if session.bind.dialect.name == 'sqlite':
             session.execute(text('BEGIN IMMEDIATE'))
@@ -305,7 +325,7 @@ def add_camera_input(body: CameraInputRequest, identity=Depends(owner)):
         if len(rows) >= 6:
             raise HTTPException(409, 'This demo supports six saved inputs per workspace')
         if any(row.payload['url'] == canonical for row in rows):
-            raise HTTPException(409, 'This YouTube input is already saved in your workspace')
+            raise HTTPException(409, 'This stream is already saved in your workspace')
         row = CameraInput(owner=identity, payload={'name': body.name.strip(), 'url': canonical})
         session.add(row)
         session.flush()
@@ -384,7 +404,7 @@ def save_camera_rule(camera_id: str, body: CameraRuleRequest, identity=Depends(o
 def stop_camera_input(camera_id: str, identity=Depends(owner)):
     with Session() as session:
         row = owned(session, CameraInput, camera_id, identity)
-        return camera.stop_saved(row.id)
+        return camera.stop_saved(row.id, row.payload['url'])
 
 
 @app.post('/api/cameras/{camera_id}/live/start', status_code=202)
@@ -542,16 +562,30 @@ def propose(body: ProposalRequest, identity=Depends(owner)):
     traffic = any(word in text for word in ['vehicle', 'truck', 'car ', 'cars', 'bus', 'traffic', 'motorcycle'])
     zone = any(word in text for word in ['person', 'people', 'anyone', 'worker', 'someone'])
     if action and not (machine or traffic):
-        return {'capability': 'action', 'dwell_seconds': 2, 'parser': 'constrained local parser',
-                'model': 'YOLO Pose and Action Transformer', 'warnings': ['Review each possible fight or fall against the footage.']}
-    if action or sum([machine, traffic, zone]) != 1:
+        capability = 'action'
+    elif action or sum([machine, traffic, zone]) != 1:
         raise HTTPException(422, 'Describe one supported rule at a time: people in a zone, vehicle counting, or visible machine activity.')
-    capability = 'machine_activity' if machine else 'traffic' if traffic else 'zone'
+    else:
+        capability = 'machine_activity' if machine else 'traffic' if traffic else 'zone'
     match = re.search(r'(\d+(?:\.\d+)?)\s*(seconds?|secs?|s)\b', text)
     words = {'one': 1, 'two': 2, 'three': 3, 'five': 5, 'ten': 10}
     dwell = float(match.group(1)) if match else next((v for k, v in words.items() if f'{k} seconds' in text), 2)
     if not 0.2 <= dwell <= 120:
         raise HTTPException(422, 'Dwell must be between 0.2 and 120 seconds')
+    if body.source_id:
+        with Session() as session:
+            source = owned(session, Source, body.source_id, identity)
+            payload = dict(source.payload or {})
+        try:
+            return proposal.build(payload, body.instruction, capability, dwell,
+                                  vision_provider=body.vision_provider,
+                                  vision_consent=body.vision_consent)
+        except proposal.ProposalError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if capability == 'action':
+        return {'capability': 'action', 'dwell_seconds': dwell, 'parser': 'constrained local parser',
+                'model': 'YOLO Pose and Action Transformer',
+                'warnings': ['Review each possible fight or fall against the footage.']}
     return {'capability': capability, 'dwell_seconds': dwell, 'parser': 'constrained local parser',
             'model': 'OpenCV ROI motion proxy' if machine else 'YOLO + ByteTrack',
             'warnings': ['No vision agent has inspected the preview. Review the suggested rule and any geometry.', 'Recipients are selected from configured contacts; language cannot authorize delivery.'] + (['Visible motion is not proof of electrical on/off state.'] if machine else [])}

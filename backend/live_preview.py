@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import youtube
+from . import streams
 from .models import detector_checkpoint
 
 log = logging.getLogger('zenith.live-preview')
@@ -30,8 +30,8 @@ def status(camera_id):
 
 
 def start(camera_id, url):
-    if not youtube.video_url(url):
-        raise ValueError('Only saved YouTube inputs support this preview')
+    if not streams.canonical(url):
+        raise ValueError('Only saved YouTube or HTTPS HLS inputs support this preview')
     with _lock:
         previous = _sessions.get(camera_id)
         if _active(previous):
@@ -96,12 +96,12 @@ def _decode(runtime, url):
             cap = None
             opened = False
             try:
-                stream = youtube.resolve(url)
+                stream = streams.resolve(url)
                 cap = cv2.VideoCapture(stream, cv2.CAP_FFMPEG, [
                     cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
                 if not cap.isOpened():
-                    # A signed URL can expire before the cache TTL; resolve fresh next time.
-                    youtube.forget_cached(url)
+                    # A signed YouTube URL can expire before the cache TTL; resolve fresh next time.
+                    streams.forget(url)
                     raise ValueError('Stream could not be opened')
                 opened = True
                 delay = 5

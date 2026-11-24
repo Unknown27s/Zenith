@@ -50,6 +50,10 @@ class CameraInput(Record):
     __tablename__ = 'camera_inputs'
 
 
+class Preference(Record):
+    __tablename__ = 'preferences'
+
+
 class Run(Record):
     __tablename__ = 'runs'
     status: Mapped[str] = mapped_column(String(24), default='queued', index=True)

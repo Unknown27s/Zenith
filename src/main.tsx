@@ -5,6 +5,7 @@ import '@fontsource/inter/latin-400.css';
 import '@fontsource/inter/latin-500.css';
 import '@fontsource/inter/latin-600.css';
 import '@fontsource/inter/latin-700.css';
+import './theme.css';
 import './styles.css';
 import './readability.css';
 import './workspace.css';
@@ -14,8 +15,25 @@ class ErrorBoundary extends Component<{children: ReactNode}, {error: boolean}> {
   static getDerivedStateFromError() { return { error: true }; }
   componentDidCatch(error: Error, info: ErrorInfo) { console.error(error, info.componentStack); }
   render() {
-    return this.state.error ? <main className="fatal"><h1>Something interrupted the dashboard.</h1><p>Your saved backend records are unaffected.</p><button onClick={() => window.location.reload()}>Reload Zenith</button></main> : this.props.children;
+    return this.state.error ? (
+      <main className="min-h-screen flex flex-col items-center justify-center p-8 bg-surface text-on-surface">
+        <h1 className="font-headline text-headline-lg text-primary mb-3">Something interrupted the dashboard.</h1>
+        <p className="font-body text-body-md text-on-surface-variant mb-6">Your saved backend records are unaffected.</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-gutter-lg py-gutter-sm rounded bg-primary text-on-primary font-label text-label-lg"
+        >
+          Reload Zenith
+        </button>
+      </main>
+    ) : this.props.children;
   }
 }
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><ErrorBoundary><App /></ErrorBoundary></React.StrictMode>);
+createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  </React.StrictMode>
+);

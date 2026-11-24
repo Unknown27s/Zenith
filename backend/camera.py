@@ -11,7 +11,7 @@ from sqlalchemy import func, select, text
 
 from .config import CLIP_SECONDS, DATA, MAX_DURATION, MAX_UPLOAD, STORAGE_LIMIT
 from .db import Run, Session, Source
-from . import youtube
+from . import streams, youtube
 
 log = logging.getLogger('zenith.camera')
 _lock = threading.Lock()
@@ -22,20 +22,22 @@ _saved = {}
 MAX_ACTIVE_CAMERAS = 3
 
 
-def saved_status(camera_id):
+def saved_status(camera_id, url=None):
     with _lock:
         runtime = _saved.get(camera_id)
         state = runtime['state'] if runtime else {'state': 'stopped', 'last_clip_at': None}
-        return {'configured': True, 'protocol': 'YouTube', 'state': state['state'],
-                'last_clip_at': state['last_clip_at'], 'active': bool(runtime and runtime['thread'].is_alive()),
+        stored_url = url or (runtime['url'] if runtime else None)
+        return {'configured': True, 'protocol': streams.protocol(stored_url) or 'unknown',
+                'state': state['state'], 'last_clip_at': state['last_clip_at'],
+                'active': bool(runtime and runtime['thread'].is_alive()),
                 'clip_seconds': CLIP_SECONDS, 'mode': 'bounded clips; shared analysis worker'}
 
 
 def start_saved(owner, camera_id, name, url, rule, approval=None):
     """Each saved input has its own stop event, rule snapshot and capture thread."""
-    canonical = youtube.video_url(url)
+    canonical = streams.canonical(url)
     if not canonical:
-        raise ValueError('Use a valid HTTPS YouTube watch or live video link')
+        raise ValueError('Use an HTTPS HLS .m3u8 link or a YouTube watch/live link')
     with _lock:
         previous = _saved.get(camera_id)
         if previous and previous['thread'].is_alive():
@@ -43,7 +45,7 @@ def start_saved(owner, camera_id, name, url, rule, approval=None):
         active = sum(runtime['thread'].is_alive() for runtime in _saved.values())
         if active + bool(_thread and _thread.is_alive()) >= MAX_ACTIVE_CAMERAS:
             raise ValueError('At most three demo inputs can capture at once; all share one analysis worker')
-        runtime = {'stop': threading.Event(),
+        runtime = {'stop': threading.Event(), 'url': canonical,
                    'state': {'state': 'connecting', 'last_clip_at': None, 'owner': owner}}
         runtime['thread'] = threading.Thread(target=_capture,
             args=(owner, rule, approval, runtime, canonical, camera_id, name),
@@ -53,13 +55,13 @@ def start_saved(owner, camera_id, name, url, rule, approval=None):
     return saved_status(camera_id)
 
 
-def stop_saved(camera_id):
+def stop_saved(camera_id, url=None):
     with _lock:
         runtime = _saved.get(camera_id)
         if runtime:
             runtime['stop'].set()
             runtime['state']['state'] = 'stopping' if runtime['thread'].is_alive() else 'stopped'
-    return saved_status(camera_id)
+    return saved_status(camera_id, url)
 
 
 def forget_saved(camera_id):
@@ -89,12 +91,12 @@ def source_url():
 
 
 def protocol():
-    return 'YouTube' if youtube.video_url(source_url()) else 'HLS' if source_url().startswith('https://') else 'RTSP'
+    return streams.protocol(source_url()) or 'RTSP'
 
 
 def capture_url():
     value = source_url()
-    return youtube.resolve(value) if youtube.video_url(value) else value
+    return streams.resolve(value) if streams.canonical(value) else value
 
 
 def configured():
@@ -156,7 +158,7 @@ def _capture(owner, rule, vision_authorization=None, runtime=None, input_url=Non
 
     state = runtime['state'] if runtime else _state
     stop_event = runtime['stop'] if runtime else _stop
-    source_protocol = 'YouTube' if input_url else protocol()
+    source_protocol = streams.protocol(input_url) if input_url else protocol()
     source_name = camera_name or source_protocol
     seconds = clip_seconds(rule)
     resolver_input = input_url or source_url()
@@ -179,7 +181,7 @@ def _capture(owner, rule, vision_authorization=None, runtime=None, input_url=Non
                 stop_event.wait(3)
                 continue
             try:
-                url = youtube.resolve(input_url) if input_url else capture_url()
+                url = streams.resolve(input_url) if input_url else capture_url()
             except ValueError:
                 with _lock:
                     state['state'] = 'capture failed'
@@ -188,7 +190,7 @@ def _capture(owner, rule, vision_authorization=None, runtime=None, input_url=Non
                 cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
             if not cap.isOpened():
                 cap.release()
-                youtube.forget_cached(resolver_input)
+                streams.forget(resolver_input)
                 with _lock:
                     state['state'] = 'reconnecting'
                 stop_event.wait(delay)
@@ -234,7 +236,7 @@ def _capture(owner, rule, vision_authorization=None, runtime=None, input_url=Non
                 preview.unlink(missing_ok=True)
                 if not stop_event.is_set():
                     if not frames:
-                        youtube.forget_cached(resolver_input)
+                        streams.forget(resolver_input)
                     with _lock:
                         state['state'] = 'reconnecting'
                     stop_event.wait(delay)
@@ -296,7 +298,7 @@ def snapshot(owner=None, input_url=None):
             raise ValueError('Camera is in use by another operator')
     cap = None
     try:
-        cap = cv2.VideoCapture(youtube.resolve(input_url) if input_url else capture_url(), cv2.CAP_FFMPEG, [
+        cap = cv2.VideoCapture(streams.resolve(input_url) if input_url else capture_url(), cv2.CAP_FFMPEG, [
             cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
         ok, frame = cap.read()
         if not ok:

@@ -23,3 +23,7 @@ Opt in from **Monitoring studio** to queue reviews for up to the first three inc
 Each completed run also saves a deterministic **analysis summary** from its measured rule outputs, even with hosted vision disabled. With an explicitly approved provider and per-run consent, the worker separately queues one optional AI summary of bounded sampled source stills and the saved rule results. Find both in **Video findings**. Neither is a full-frame audit or an instruction to take autonomous action. Without NVIDIA sharing permission, no video frames are sent off the backend.
 
 Authenticated routes are `GET /api/vision/status`, `GET /api/events/{event_id}/review` and `POST /api/events/{event_id}/review`. The POST body accepts `provider` and `consent`. The existing event list includes the latest review so the dashboard can update through its existing polling.
+
+## Geometry proposals
+
+`POST /api/proposals` can draft a rule region from one sampled frame when `source_id` and `vision_provider` are supplied. Hosted providers require `VISION_SEND_TO_THIRD_PARTY=true` and `vision_consent: true`; local providers use the configured loopback or private endpoint. The returned geometry and detector settings are validated against the same rule schema, contain no recipients, and still require operator confirmation. Set `ZENITH_PROPOSAL_TIMEOUT` (default 60 seconds, bounded 5–180) to limit the wait. If the vision request fails, the endpoint falls back to the detector/motion proposal and reports that fallback in `warnings`; it never silently treats a model answer as confirmed.

@@ -45,7 +45,7 @@ The commands above intentionally install CPU PyTorch. For a laptop NVIDIA GPU, c
 
 ## Pages
 - **Overview:** actual sources, observations, crossings and separate equipment/traffic carbon summaries. Honest empty states; no fabricated stats.
-- **Monitoring studio:** upload permitted-use clips or record a short browser-camera clip (HTTPS/localhost), inspect the suggested zone/line, describe what to watch, confirm and run. Browser camera capture is not continuous CCTV ingestion.
+- **Monitoring studio:** upload permitted-use clips or record a short browser-camera clip (HTTPS/localhost), describe what to watch, review the proposed region/settings, confirm and run. Proposals come from sampled frames; a configured vision model is optional. Browser camera capture is not continuous CCTV ingestion.
 - **Cameras & live streams:** enter named YouTube live URLs directly, then open each
   camera's own page for same-frame sampled YOLO boxes, independent incident rules,
   evidence and start/stop controls. Six saved inputs, three bounded captures and
@@ -70,8 +70,8 @@ The administrator can issue separate local operator keys in Settings; source and
 
 ## First real run
 1. Choose one of the licensed source excerpts in **Demo Footage**, or upload a short fixed-camera clip (max 100 MB / 180 seconds by default). Additional original footage still requires your consent/reuse review. Bundled clips are demonstration sources, not validated rule outcomes.
-2. For a person-zone instruction, choose **Restricted-zone dwell**; click a polygon around the area. Use at least three non-crossing points. A keyboard coordinate editor is also available.
-3. Confirm the dwell threshold, geometry, name and configured recipient. Click **Run analysis**.
+2. Describe the rule in **Describe what to detect** and click **Propose rule**. The backend samples frames from the clip and proposes a region, gate or settings; a configured vision model can be used when its consent box is enabled. Manual adjustment and a keyboard coordinate editor remain available, but drawing is not required.
+3. Review the proposal and its stated uncertainties. Confirm the dwell threshold, geometry, name and configured recipient. Click **Run analysis**. The proposal is not a survey or a scene-understanding guarantee.
 4. Detector weights download on their first run. To cache the default zone, traffic, and pose models before a demo, run:
    `.venv/bin/python -c "from ultralytics import YOLO; YOLO('yolo26n.pt'); YOLO('yolo11n-pose.pt')"`
    Zone, traffic and live preview use YOLO26 Nano on CPU by default. Live preview displays all 80 pretrained COCO categories; zone and traffic rules retain their task-specific filters. This is sampled detection, not a full-frame-rate video guarantee. Fight/fall analysis retains YOLO11 Pose and its separate action classifier.
@@ -79,7 +79,7 @@ The administrator can issue separate local operator keys in Settings; source and
 
 ## Traffic CO₂ and fight/fall notebooks
 
-- [Traffic CO₂ Colab](notebooks/Zenith_Traffic_CO2_Colab.ipynb) runs the standalone two-gate demo. In Studio, choose traffic analysis and enable **Count complete road segment traversals**. Draw Gate A, then Gate B, left to right. Enter the measured road distance in metres. Completed two-gate runs carry their distance into carbon estimates. Enter a documented class factor in g CO₂ per vehicle-km. Demo Footage supplies an illustrative 50 m distance and factors for preview.
+- [Traffic CO₂ Colab](notebooks/Zenith_Traffic_CO2_Colab.ipynb) runs the standalone two-gate demo. In Studio, choose traffic analysis and review the proposed crossing gate. Enable **Count complete road segment traversals** when you need two gates, adjust Gate A and add Gate B left to right, then enter the measured road distance in metres. Completed two-gate runs carry their distance into carbon estimates. Enter a documented class factor in g CO₂ per vehicle-km. Demo Footage supplies an illustrative 50 m distance and factors for preview.
 - [Fight and fall training Colab](notebooks/Zenith_CCTV_AutoTrain_Colab.ipynb) exports **zenith_cctv_action.pt**. Connect using the administrator key and upload the file in **Settings → Analysis models**. Alternatively put it in **data/models/zenith_cctv_action.pt** under the shared data directory or set **ZENITH_ACTION_MODEL** to a worker-visible path. The worker uses YOLO11 Pose plus the trained Transformer. The upload validates the checkpoint format and model architecture. The notebook's first reported test detected 15 of 29 fights and 8 of 22 falls. Review all model observations using the original footage.
 - Demo Footage includes a fixed-camera motorway segment, boxing training and a staged fall. The two action clips join the automatic demo once an action checkpoint is configured. Boxing training tests a look-alike scenario. Action results are clip-based, including during bounded camera capture.
 
@@ -99,12 +99,12 @@ The Carbon page also has an **operator-declared machine operation register**: re
 CO₂-only traffic estimates and CO₂e equipment estimates are not merged into one misleading total. Ledger entries are append-only estimates; avoid duplicate/overlapping activities. If one run supplies different vehicle classes, create one factor entry per class. Aggregated run counts include reruns, not deduplicated physical journeys.
 
 ## Plain-English configuration
-An allowlisted **local constrained parser**, not a Gemini scene-reading agent, supports one capability at a time:
+An allowlisted **local parser** selects one capability at a time:
 - “Alert if anyone stays inside for two seconds.” → YOLO detection + tracking + zone dwell.
 - “Count vehicles crossing this line.” → the same detector + tracking + finite line-crossing rule.
 - “Observe visible machine activity.” → OpenCV ROI motion proxy, **not an electrical state model**.
 
-Draw and confirm geometry. The parser cannot locate a loading bay or authorize an email recipient from words. No arbitrary model/code execution. Pose/collapse, helmets/PPE, crowd and exit obstruction are not enabled.
+The parser does not itself place geometry. A proposal step samples a bounded set of frames and uses the configured detector or, when explicitly enabled, a configured vision model to draft a region and settings. The draft is validated and returned for review; it is not a survey, camera calibration, or proof that the described area is correct. The parser cannot authorize an email recipient from words. No arbitrary model/code execution. Pose/collapse, helmets/PPE, crowd and exit obstruction are not enabled. Hosted vision proposals require backend sharing permission and explicit per-proposal consent; the local vision path uses the configured loopback or private endpoint.
 
 ## Email and evidence
 Default: preview-only. Set `ZENITH_RECIPIENTS` to approved email addresses. Actual sending also needs `RESEND_API_KEY` and a verified `ZENITH_FROM_EMAIL`. Restart API and worker after changing settings. No actual emails were sent during the build.

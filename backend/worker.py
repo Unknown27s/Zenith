@@ -15,7 +15,8 @@ import numpy as np
 from sqlalchemy import or_, select, update
 
 from .alerts import telegram_send, telegram_send_photo
-from .config import ALL_RECIPIENTS, DATA, TELEGRAM_BOT_TOKEN, TELEGRAM_SEND_EVIDENCE, VISION_AUTO_LIMIT, telegram_chat
+from .config import ALL_RECIPIENTS, DATA, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, TELEGRAM_SEND_EVIDENCE, VISION_AUTO_LIMIT, telegram_chat
+from . import preferences
 from .db import Incident, Notification, Run, Session, Source, VisionReview, init_db
 from .models import action_checkpoint, detector_checkpoint
 from .segment import SegmentCounter, gate_crossing
@@ -74,7 +75,75 @@ def recent_alert(session, owner, rule_key, since):
     rows = session.scalars(select(Notification).where(
         Notification.owner == owner, Notification.created >= since,
         Notification.status.in_(['pending', 'retry', 'sent', 'preview'])).order_by(Notification.created.desc()).limit(200))
-    return next((row for row in rows if row.payload.get('rule_key') == rule_key), None)
+    return next((row for row in rows if row.payload.get('rule_key') == rule_key
+                 and row.payload.get('kind') != 'vehicle_photo'), None)
+
+
+def vehicle_photo_targets(rule):
+    """Use the rule's configured Telegram recipients, or every configured chat."""
+    configured = [f'telegram:{chat}' for chat in TELEGRAM_CHAT_IDS]
+    selected = [recipient for recipient in rule.get('recipients', []) if recipient in configured]
+    return selected or configured
+
+
+def queue_vehicle_photo(run, token, image, timestamp, label, track_id):
+    """Queue at most one detector frame for Telegram when a vehicle is first seen.
+
+    This is separate from incident alerts: it is a sighting notification, not a
+    confirmed incident, and the caption says so.  Saved cameras keep the rule's
+    repeat-alert cooldown so a continuously moving stream does not spam a chat.
+    """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
+        return
+    rule = run.payload['rule']
+    recipients = vehicle_photo_targets(rule)
+    if not recipients:
+        return
+    with Session() as session:
+        current = session.get(Run, run.id)
+        if current is None or current.lease_token != token:
+            return
+        fingerprint = rule_fingerprint(rule)
+        camera_id = run.payload.get('camera_id')
+        if camera_id:
+            fingerprint = hashlib.sha256(f"{camera_id}:{fingerprint}".encode()).hexdigest()[:32]
+            cooldown = float(rule.get('alert_cooldown_seconds', 300))
+            since = time.time() - cooldown
+            previous = session.scalars(select(Notification).where(
+                Notification.owner == run.owner, Notification.created >= since
+            ).order_by(Notification.created.desc()).limit(100))
+            if any(row.payload.get('kind') == 'vehicle_photo'
+                   and row.payload.get('rule_key') == fingerprint for row in previous):
+                return
+        seed = f'{run.id}:{track_id}:{timestamp:.3f}:{label}'
+        photo_id = hashlib.sha256(seed.encode()).hexdigest()[:40]
+        evidence_name = f'{photo_id}-vehicle.jpg'
+        ok, encoded = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ok:
+            return
+        try:
+            (DATA / 'evidence' / evidence_name).write_bytes(encoded.tobytes())
+        except OSError:
+            log.warning('Vehicle photo evidence could not be written')
+            return
+        text = (f'Vehicle detected: {label} (track {track_id})\n'
+                f"Source: {run.payload['source_name']}\n"
+                f'Video offset: {timestamp:.2f}s\n'
+                f"Rule: {rule['name']}\n"
+                'Detector output only; verify the footage before acting.')
+        for recipient in recipients:
+            notification_id = hashlib.sha256(f'{photo_id}:{recipient}'.encode()).hexdigest()[:48]
+            if session.get(Notification, notification_id):
+                continue
+            session.add(Notification(id=notification_id, owner=run.owner, status='pending', payload={
+                'kind': 'vehicle_photo', 'photo': True, 'rule_key': fingerprint,
+                'rule_name': rule['name'], 'recipient': recipient,
+                'source_id': run.payload['source_id'], 'source_name': run.payload['source_name'],
+                'camera_id': camera_id, 'camera_name': run.payload.get('camera_name'),
+                'source_seconds': round(timestamp, 3), 'vehicle_class': label, 'track_id': track_id,
+                'subject': f'[Zenith] Vehicle detected: {label}', 'text': text,
+                'evidence': evidence_name, 'attempts': 0}))
+        session.commit()
 
 
 def save_incident(run, token, frame_index, timestamp, title, detail, frames, auto_review):
@@ -192,6 +261,8 @@ def analyze(run_id, token):
         run = session.get(Run, run_id)
         source = session.get(Source, run.payload['source_id'])
     rule = run.payload['rule']
+    vehicle_photos = preferences.get('telegram_car_photos') and bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS)
+    vehicle_photo_queued = False
     cap = cv2.VideoCapture(str(DATA / 'sources' / source.payload['file']))
     capability = rule['capability']
     model = action = None
@@ -283,6 +354,7 @@ def analyze(run_id, token):
                 annotated = cv2.addWeighted(overlay, 0.18, annotated, 0.82, 0)
                 cv2.polylines(annotated, [polygon], True, (180, 230, 70), 2)
             signals = []
+            first_vehicle = None
             if model is not None:
                 result = model.track(frame, persist=True, tracker='bytetrack.yaml', classes=classes,
                                      device='cpu',
@@ -303,6 +375,9 @@ def analyze(run_id, token):
                         cv2.rectangle(annotated, (x1,y1), (x2,y2), (90,230,170), 2)
                         label = result.names[cls]
                         cv2.putText(annotated, f'{label} #{track_id}', (x1,max(20,y1-7)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (90,230,170), 1)
+                        if (vehicle_photos and not vehicle_photo_queued and first_vehicle is None
+                                and label in rule.get('vehicle_classes', [])):
+                            first_vehicle = (label, track_id)
                         if rule['capability'] == 'zone':
                             inside = cv2.pointPolygonTest(points, foot, False) >= 0
                             if inside:
@@ -358,6 +433,9 @@ def analyze(run_id, token):
                 last_gray = gray
                 cv2.putText(annotated, f'MOTION PROXY {fraction:.1%} | NOT POWER STATE', (14,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (90,230,170), 2)
             cv2.putText(annotated, f'SOURCE {timestamp:.2f}s', (14,height-16), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+            if first_vehicle is not None and not vehicle_photo_queued:
+                queue_vehicle_photo(run, token, annotated.copy(), timestamp, *first_vehicle)
+                vehicle_photo_queued = True
             for event_id, due in list(pending_after):
                 if timestamp >= due:
                     add_after(event_id, annotated)
@@ -404,6 +482,11 @@ def deliver_notifications():
                 row.status = 'blocked'
                 session.commit()
                 continue
+            if payload.get('kind') == 'vehicle_photo' and not preferences.get('telegram_car_photos'):
+                row.status = 'cancelled'
+                row.payload = {**payload, 'error': 'Vehicle photo alerts were turned off before delivery'}
+                session.commit()
+                continue
             chat = telegram_chat(recipient)
             key = os.getenv('RESEND_API_KEY')
             sender = payload.get('sender') or os.getenv('ZENITH_FROM_EMAIL')
@@ -431,7 +514,7 @@ def deliver_notifications():
                 # Telegram has no idempotency key: a crash after send can duplicate one alert.
                 evidence = str(payload.get('evidence') or '')
                 path = DATA / 'evidence' / Path(evidence).name if evidence else None
-                if TELEGRAM_SEND_EVIDENCE and path is not None and path.is_file() and not payload.get('photo_rejected'):
+                if (TELEGRAM_SEND_EVIDENCE or payload.get('kind') == 'vehicle_photo') and path is not None and path.is_file() and not payload.get('photo_rejected'):
                     delivered, retryable, detail = telegram_send_photo(chat, path, payload['text'])
                     if not delivered and not retryable:
                         # A permanently rejected photo must not cost the alert; retry as text.

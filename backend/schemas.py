@@ -112,12 +112,20 @@ class CameraInputRequest(StrictModel):
     url: str = Field(min_length=1, max_length=2048)
 
 
+class PreferencesRequest(StrictModel):
+    telegram_car_photos: bool
+
+
 class OperatorKeyRequest(StrictModel):
     label: str = Field(min_length=2, max_length=80, pattern=r'\S')
 
 
 class ProposalRequest(StrictModel):
     instruction: str = Field(min_length=5, max_length=2000)
+    source_id: str | None = Field(default=None, max_length=64)
+    # Geometry from a hosted vision model needs the same explicit consent as review.
+    vision_provider: Literal['nvidia', 'local'] | None = None
+    vision_consent: StrictBool = False
 
 
 class Action(StrictModel):

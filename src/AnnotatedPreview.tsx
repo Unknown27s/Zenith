@@ -82,7 +82,7 @@ export default function AnnotatedPreview({camera, connected, refresh, notify}: {
         {camera.live.detections !== undefined ? enabled && fresh ? ` Latest frame: ${camera.live.detections} detected object(s).` : ` Last sampled frame reported ${camera.live.detections} detected object(s).` : ''}</p>
       <p>Use this preview only to check stream access and detection quality. To create evidence, counts or alerts, use the incident rule and clip analysis below. {camera.live.model ? `Detector: ${camera.live.model}. ` : ''}
         Preview uses confidence 0.30 and 416-pixel inference; incident-rule settings are independent.
-        YouTube adds delay; inference speed depends on hardware. Boxes are detections, not confirmed incidents.
+        Network streams add delay; inference speed depends on hardware. Boxes are detections, not confirmed incidents.
         At most two previews run at once; previews stop after 90 seconds without frame requests.</p>
     </div>
   </section>;
