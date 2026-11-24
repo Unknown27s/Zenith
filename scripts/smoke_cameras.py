@@ -1,4 +1,5 @@
 """Isolated camera API/capture tests. No YouTube, Telegram or hosted model is contacted."""
+import hashlib
 import os
 import sys
 import tempfile
@@ -44,12 +45,19 @@ with tempfile.TemporaryDirectory(prefix='zenith-cameras-', dir=temp_root) as dir
         assert client.get('/api/cameras', headers=other).json() == []
         for suffix in ('preview', 'live/frame'):
             assert client.get(f"/api/cameras/{first['id']}/{suffix}", headers=other).status_code == 404
-        for suffix in ('start', 'stop', 'remove', 'live/start', 'live/stop'):
-            body = {'rule': {'capability': 'zone', 'name': 'Test', 'points': [[.1,.1],[.9,.1],[.9,.9]], 'confirmed': True}}
-            assert client.post(f"/api/cameras/{first['id']}/{suffix}", headers=other, json=body).status_code in (404, 409)
-        (DATA / 'worker.heartbeat').touch()
         rule = {'capability': 'zone', 'name': 'Entrance watch', 'points': [[.1,.1],[.9,.1],[.9,.9]],
                 'confirmed': True, 'recipients': []}
+        for suffix in ('rule', 'start', 'stop', 'remove', 'live/start', 'live/stop'):
+            assert client.post(f"/api/cameras/{first['id']}/{suffix}", headers=other, json={'rule': rule}).status_code in (404, 409)
+        # Saving a rule is per-camera and does not require the worker heartbeat.
+        saved_rule = client.post(f"/api/cameras/{first['id']}/rule", headers=headers, json={'rule': rule})
+        assert saved_rule.status_code == 200, saved_rule.text
+        assert saved_rule.json()['last_rule']['name'] == 'Entrance watch'
+        second_rule = {**rule, 'name': 'Road watch'}
+        assert client.post(f"/api/cameras/{second['id']}/rule", headers=headers, json={'rule': second_rule}).status_code == 200
+        camera_rules = {camera['id']: camera['last_rule']['name'] for camera in client.get('/api/cameras', headers=headers).json()}
+        assert camera_rules == {first['id']: 'Entrance watch', second['id']: 'Road watch'}
+        (DATA / 'worker.heartbeat').touch()
         fake_thread = lambda **kwargs: SimpleNamespace(start=lambda: None, is_alive=lambda: True)
         with patch.object(camera.threading, 'Thread', side_effect=fake_thread):
             started = client.post(f"/api/cameras/{first['id']}/start", headers=headers, json={'rule': rule})
@@ -102,6 +110,42 @@ with tempfile.TemporaryDirectory(prefix='zenith-cameras-', dir=temp_root) as dir
             assert source.payload['camera_id'] == first['id'] and 'Entrance' in source.payload['name']
             assert run.payload['camera_id'] == first['id'] and run.payload['rule']['name'] == 'Entrance watch'
         print('PASS: real bounded recording writes camera-tagged source and run')
+
+        # A completed traffic run supplies the per-camera carbon estimate through the same API.
+        identity = hashlib.sha256(TOKEN.encode()).hexdigest()
+        with Session() as session:
+            run = session.scalar(select(Run).where(Run.owner == 'a'*64))
+            run.owner = identity
+            run.status = 'completed'
+            run.payload = {**run.payload,
+                'rule': {'capability': 'traffic', 'name': 'Road counts', 'instruction': '',
+                         'points': [[.1,.4],[.9,.4],[.1,.6],[.9,.6]], 'segment_metres': 50,
+                         'confirmed': True, 'recipients': []},
+                'counts': {'car': 10, 'motorcycle': 2, 'bus': 0, 'truck': 1},
+                'crossings': [
+                    {'source_seconds': 1, 'track_id': 7, 'vehicle_class': 'car', 'direction': 'A→B', 'box': [0,0,1,1]},
+                    {'source_seconds': 2, 'track_id': 8, 'vehicle_class': 'car', 'direction': 'B→A', 'box': [0,0,1,1]},
+                ],
+                'crossing_reviews': {'8': {'action': 'false_positive', 'note': 'Shadow', 'reviewed_at': 1}},
+                'progress': 100, 'stage': 'Completed', 'coverage': 'test',
+            }
+            session.commit()
+            traffic_id = run.id
+        carbon_body = {
+            'name': 'Entrance · car traffic', 'kind': 'traffic', 'quantity': 0,
+            'factor': 170, 'factor_source': 'DEFRA 2023 test · Generic · 2023',
+            'basis': 'Camera test counts.', 'run_id': traffic_id, 'vehicle_class': 'car',
+        }
+        preview = client.post('/api/carbon/preview', headers=headers, json=carbon_body)
+        assert preview.status_code == 200, preview.text
+        estimate = preview.json()
+        assert abs(estimate['kg'] - 9 * 0.05 * 170 / 1000) < 1e-9
+        assert estimate['distance_km'] == 0.05
+        assert '1 operator-reviewed false positive' in estimate['basis']
+        saved_carbon = client.post('/api/carbon', headers=headers, json=carbon_body)
+        assert saved_carbon.status_code == 201, saved_carbon.text
+        assert saved_carbon.json()['run_id'] == traffic_id
+        print('PASS: saved camera rule and completed traffic counts produce a carbon estimate')
 
         # Exercise actual local YOLO inference/annotation on a permitted bundled sample frame.
         cap = cv2.VideoCapture(str(ROOT / 'public' / 'examples' / 'traffic-counting.webm'))

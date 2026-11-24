@@ -59,6 +59,20 @@
 .camera-history { padding: 24px; }
 .camera-history > p { margin: 12px 0; font-size: 12px; line-height: 1.8; color: #657164; }
 .camera-history > a { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 14px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.camera-carbon { padding: 24px; }
+.camera-carbon .panel-heading { padding: 0 0 18px; }
+.camera-carbon .panel-heading h2 { display: flex; align-items: center; gap: 8px; }
+.camera-carbon form { display: grid; gap: 16px; }
+.camera-carbon .action-row { margin: 0; }
+.camera-carbon-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 0; }
+.camera-carbon-counts > div { padding: 12px 14px; background: #f4f7ee; border-radius: 8px; }
+.camera-carbon-counts dt { font-size: 10px; letter-spacing: .4px; text-transform: uppercase; color: #657164; }
+.camera-carbon-counts dd { margin: 5px 0 0; font-weight: 600; }
+.camera-carbon .workspace-estimate { margin: 0; }
+@media (max-width: 760px) {
+  .camera-carbon { padding: 18px; }
+  .camera-carbon .form-grid { grid-template-columns: 1fr; }
+}
 @media (max-width: 760px) {
   .camera-rule-fields { grid-template-columns: 1fr; }
   .camera-add, .saved-camera-card, .camera-history, .annotated-controls { padding: 18px; }

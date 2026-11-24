@@ -4,6 +4,7 @@ import { connection, json } from './api';
 import type { Capability, Data, SavedCamera } from './types';
 import NetworkCamera, { type StreamRule } from './NetworkCamera';
 import AnnotatedPreview from './AnnotatedPreview';
+import CameraCarbon from './CameraCarbon';
 import DetectorSettings, { detectorPreset } from './DetectorSettings';
 import { analysisModes } from './workflow';
 
@@ -65,7 +66,7 @@ export default function CamerasPage({data, connected, refresh, notify, selectedI
   </>;
   return <>
     <div className="heading"><div><div className="eyebrow">MULTI-INPUT DEMO</div><h1>Cameras & live streams</h1>
-      <p>Paste YouTube URLs here. No environment edit or restart is needed for saved demo inputs.</p></div></div>
+      <p>Paste YouTube URLs here. Each camera keeps its own incident rule and carbon estimate.</p></div></div>
     {connected && !supported && <BackendUpdateRequired/>}
     <section className="panel camera-add"><h2><Plus size={18}/> Add YouTube camera input</h2>
       <form onSubmit={event => void add(event)}>
@@ -82,8 +83,9 @@ export default function CamerasPage({data, connected, refresh, notify, selectedI
     <div className="saved-camera-grid">{cameras.map(camera => <article className="panel saved-camera-card" key={camera.id}>
       <Camera size={24}/><h2>{camera.name}</h2><p>{camera.url}</p>
       <dl><div><dt>Clip analysis</dt><dd>{camera.health.state}</dd></div><div><dt>YOLO preview</dt><dd>{camera.live.state}</dd></div>
+        <div><dt>Incident rule</dt><dd>{camera.last_rule?.name || 'Not configured'}</dd></div>
         <div><dt>Latest clip</dt><dd>{camera.health.last_clip_at ? new Date(camera.health.last_clip_at*1000).toLocaleTimeString() : 'None yet'}</dd></div></dl>
-      <div className="action-row"><a className="button primary" href={`#cameras/${camera.id}`}>Open camera →</a>
+      <div className="action-row"><a className="button primary" href={`#cameras/${camera.id}`}>Open camera & rule →</a>
         <button className="button secondary" disabled={camera.health.active || camera.live.active} onClick={() => void remove(camera)} aria-label={`Remove ${camera.name}`}><Trash2 size={15}/></button></div>
     </article>)}</div>
     {!cameras.length && <section className="panel camera-empty"><Camera size={28}/><p>{connected ? 'Add your first permitted YouTube livestream above.' : 'Connect your backend in Health & settings to save camera inputs.'}</p></section>}
@@ -112,7 +114,7 @@ function CameraWorkspace({camera, data, connected, refresh, notify}: Omit<Props,
   }
   return <div className="camera-workspace">
     <AnnotatedPreview camera={camera} connected={connected} refresh={refresh} notify={notify}/>
-    <section className="panel camera-rule-settings"><div className="panel-heading"><div><h2>Incident rule for this camera</h2><p>These settings belong to {camera.name}, not other cameras.</p></div></div>
+    <section className="panel camera-rule-settings"><div className="panel-heading"><div><h2>Incident rule for this camera</h2><p>These settings belong to {camera.name}, not other cameras. Preview the stream, draw the geometry, tick the review box, then click <strong>Save rule</strong> (or start the stream) to store them.</p></div></div>
       <div className="camera-rule-fields form-grid">
         <label>Monitoring type<select aria-label="Monitoring type" value={rule.capability} onChange={event => capability(event.target.value as Capability)}>
           {(Object.keys(analysisModes) as Capability[]).map(mode => <option key={mode} value={mode}>{analysisModes[mode].label}</option>)}</select></label>
@@ -134,10 +136,11 @@ function CameraWorkspace({camera, data, connected, refresh, notify}: Omit<Props,
           {recipient.startsWith('telegram:') ? `Telegram · chat ${recipient.slice(9)}` : recipient}
         </label>) : <p>No approved recipients. Configure Telegram or email in Health & settings.</p>}
       </fieldset>
-      <NetworkCamera camera={camera.health} rule={rule} endpoint={`/cameras/${camera.id}`} initialPoints={camera.last_rule?.points}
+      <NetworkCamera camera={camera.health} rule={rule} endpoint={`/cameras/${camera.id}`} saveEndpoint={`/cameras/${camera.id}/rule`} initialPoints={camera.last_rule?.points}
         vision={data.status?.vision} connected={connected} workerOnline={!!data.status?.worker_online}
         actionReady={!!data.status?.models?.action.checkpoint_present} refresh={refresh} notify={notify}/>
     </section>
+    <CameraCarbon camera={camera} runs={runs} connected={connected} notify={notify} refresh={refresh}/>
     <section className="panel camera-history"><h2>Camera findings</h2><p>{runs.length} clip analyses · {incidents.length} observations. Preview boxes alone do not create incidents.</p>
       {incidents.slice(0, 6).map(event => <a key={event.id} href={`#incidents/${event.id}`}><strong>{event.title}</strong><span>{event.source_seconds.toFixed(2)} s · {event.operator_status}</span></a>)}
       {runs.slice(0, 6).map(run => <a key={run.id} href={`#videos/${run.source_id}/${run.id}`}><strong>{run.source_name}</strong><span>{run.status} · {run.stage}</span></a>)}

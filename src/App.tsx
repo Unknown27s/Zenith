@@ -15,6 +15,7 @@ import OperatorKeys from './OperatorKeys';
 import HealthPanel from './HealthPanel';
 import DemoSetup from './DemoSetup';
 import FactorLibrary, { type SavedFactor } from './FactorLibrary';
+import OverviewLiveFeed from './OverviewLiveFeed';
 import { analysisModes, runLink, runStatus } from './workflow';
 
 const navigation: {id: Page; label: string; icon: typeof Activity}[] = [
@@ -114,7 +115,7 @@ export default function App() {
 }
 interface Props {data: Data;connected:boolean;notify:(message:string)=>void;refresh:()=>void}
 
-function Overview({data,connected}: Props) {
+function Overview({data,connected,notify,refresh}: Props) {
   const pending=data.events.filter(event=>event.operator_status==='suspected');
   const active=data.runs.filter(run=>run.status==='queued'||run.status==='processing');
   const workerReady=connected&&!!data.status?.worker_online;
@@ -139,6 +140,7 @@ function Overview({data,connected}: Props) {
         <div><dt>Needs review</dt><dd>{connected?pending.length:'—'}</dd></div>
       </dl>
     </section>
+    <OverviewLiveFeed connected={connected} notify={notify} refresh={refresh}/>
     <div className="overview-grid">
       <section className="panel">
         <div className="panel-heading"><div><h2>Recent analyses</h2><p>Open a run to see progress and evidence.</p></div><a href="#videos">All videos <ArrowUpRight size={15}/></a></div>
@@ -327,11 +329,13 @@ function Studio({data,connected,notify,refresh,selectedSourceId}: Props & {selec
         <span>{capability==='action'?(missingAction?'Checkpoint needed':'Checkpoint installed · loaded per run')
           :capability==='machine_activity'?'Estimates visible motion duration'
           :capability==='traffic'?'Vehicle counts · CO₂ uses documented factors':'Tracked people · zone and dwell rule'}</span>
-      </div></div>{capability==='machine_activity'&&<div className="warning-note">Stationary powered equipment can look inactive. People, shadows and camera movement can look like operation. Do not use this as an on/off sensor.</div>}<label className="checkbox"><input type="checkbox" checked={confirmed} disabled={!enough} onChange={e=>setConfirmed(e.target.checked)}/><span>I reviewed the region, rule and notification recipients.</span></label>{vision?.available&&<label className="checkbox">
-      <input type="checkbox" checked={review} onChange={e=>setReview(e.target.checked)}/>
-       <span>{vision.provider!=='local'
-         ? `I have permission to send sampled frames and incident evidence from this clip to ${vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'} for advisory review.`
-        : 'Summarize sampled video frames and review saved incident evidence with the local vision model.'} Up to {vision.auto_limit} incidents per run.</span>
+      </div></div>{capability==='machine_activity'&&<div className="warning-note">Stationary powered equipment can look inactive. People, shadows and camera movement can look like operation. Do not use this as an on/off sensor.</div>}<label className="checkbox"><input type="checkbox" checked={confirmed} disabled={!enough} onChange={e=>setConfirmed(e.target.checked)}/><span>I reviewed the region, rule and notification recipients.</span></label>{vision&&<label className="checkbox">
+      <input type="checkbox" checked={review} disabled={!vision.available} onChange={e=>setReview(e.target.checked)}/>
+       <span>{vision.available
+         ? <>{vision.provider!=='local'
+             ? `I have permission to send sampled frames and incident evidence from this clip to ${vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'} for advisory review.`
+             : 'Summarize sampled video frames and review saved incident evidence with the local vision model.'} Up to {vision.auto_limit} incidents per run.</>
+         : `Vision review is configured but not available: ${vision.detail||'check Settings'}.`}</span>
     </label>}<button className="button primary full" disabled={!!blocker||!!busy} onClick={()=>void run()}>
       {busy==='run'?<LoaderCircle size={17} className="spin"/>:<MonitorPlay size={17}/>}
       {busy==='run'?'Submitting…':'Run analysis'}
@@ -429,68 +433,169 @@ function Incidents({data,connected,notify,refresh,selectedId}: Props & {selected
 }
 
 function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requestedRunId:string}) {
-  const [kind,setKind]=useState('electricity');const [busy,setBusy]=useState(false);const [runId,setRunId]=useState('');
+  const [kind,setKind]=useState<'electricity'|'fuel'|'traffic'>('electricity');
+  const [metered,setMetered]=useState(false);
+  const [sourceMode,setSourceMode]=useState<'manual'|'run'>('manual');
+  const [runId,setRunId]=useState('');
+
   const [factor,setFactor]=useState<SavedFactor|null>(null);
-  const [preview,setPreview]=useState<CarbonEstimate|null>(null);
+  const [manualFactor,setManualFactor]=useState('');
+  const [manualSource,setManualSource]=useState('');
+
+  const [activityName,setActivityName]=useState('');
+  const [quantity,setQuantity]=useState('');
+  const [hours,setHours]=useState('');
+  const [meteredKwh,setMeteredKwh]=useState('');
+  const [loadFraction,setLoadFraction]=useState('0.85');
+  const [distanceKm,setDistanceKm]=useState('1');
+  const [vehicleClass,setVehicleClass]=useState<'car'|'motorcycle'|'bus'|'truck'>('car');
+
+  const [basis,setBasis]=useState('');
+  const [proxy,setProxy]=useState(false);
+
+  const [busy,setBusy]=useState(false);
   const [previewing,setPreviewing]=useState(false);
+  const [preview,setPreview]=useState<CarbonEstimate|null>(null);
   const [estimateError,setEstimateError]=useState('');
   const previewRevision=useRef(0);
+
   function clearPreview(){
     previewRevision.current+=1;
     setPreview(null);
     setEstimateError('');
   }
-  useEffect(()=>{clearPreview();},[kind,runId,factor,connected]);
-  useEffect(()=>{
-    if (!factor) return;
-    const form=document.querySelector<HTMLFormElement>('.carbon-form form');
-    const factorInput=form?.elements.namedItem('factor');
-    const sourceInput=form?.elements.namedItem('factor_source');
-    const classInput=form?.elements.namedItem('vehicle_class');
-    if (factorInput instanceof HTMLInputElement) factorInput.value=String(factor.factor);
-    if (sourceInput instanceof HTMLInputElement) sourceInput.value=`${factor.source} · ${factor.region} · ${factor.year}`;
-    if (classInput instanceof HTMLSelectElement && factor.vehicle_class) classInput.value=factor.vehicle_class;
-  },[factor,runId]);
-  const [proxy,setProxy]=useState(false);
-  const [metered,setMetered]=useState(false);
-  const linkedRun=data.runs.find(run=>run.id===requestedRunId&&run.status==='completed'&&(run.rule.capability==='traffic'||run.rule.capability==='machine_activity'));
-  const linkedCapability=linkedRun?.rule.capability;
-  const linkedId=linkedRun?.id;
-  useEffect(()=>{
-    if(!linkedId)return;
-    setKind(linkedCapability==='traffic'?'traffic':'electricity');
-    setRunId(linkedId);
-    setProxy(false);
-    setMetered(false);
-  },[linkedId,linkedCapability]);
+
+  // Handle incoming link or candidate run pre-selection
+  const linkedRun=data.runs.find(run=>run.id===(runId||requestedRunId)&&run.status==='completed'&&(run.rule.capability==='traffic'||run.rule.capability==='machine_activity'));
   const selectedRun=data.runs.find(run=>run.id===runId);
-  const useMeter=kind==='electricity'&&metered;
-  function estimateBody(form:HTMLFormElement) {
-    const values=Object.fromEntries(new FormData(form));
+
+  useEffect(()=>{
+    if(!requestedRunId)return;
+    const run=data.runs.find(r=>r.id===requestedRunId&&r.status==='completed');
+    if(!run)return;
+    if(run.rule.capability==='traffic'){
+      setKind('traffic');
+      setSourceMode('run');
+      setRunId(run.id);
+      setActivityName(run.source_name);
+      setVehicleClass('car');
+      setQuantity(String(run.counts?.car ?? 0));
+      if(run.rule.segment_metres)setDistanceKm((run.rule.segment_metres/1000).toString());
+    }else if(run.rule.capability==='machine_activity'){
+      setKind('electricity');
+      setSourceMode('run');
+      setRunId(run.id);
+      setActivityName(run.source_name);
+      setMetered(false);
+      setHours(((run.activity_seconds||0)/3600).toFixed(4));
+    }
+  },[requestedRunId]);
+
+  useEffect(()=>{
+    if(!selectedRun)return;
+    setActivityName(selectedRun.source_name);
+    if(kind==='traffic'){
+      const cnt=selectedRun.counts?.[vehicleClass] ?? 0;
+      setQuantity(String(cnt));
+      if(selectedRun.rule.segment_metres)setDistanceKm((selectedRun.rule.segment_metres/1000).toString());
+    }else if(kind==='electricity'&&sourceMode==='run'){
+      setHours(((selectedRun.activity_seconds||0)/3600).toFixed(4));
+    }
+  },[selectedRun?.id,kind,vehicleClass,sourceMode]);
+
+  useEffect(()=>{
+    if(factor?.vehicle_class&&kind==='traffic'){
+      setVehicleClass(factor.vehicle_class as 'car'|'motorcycle'|'bus'|'truck');
+    }
+  },[factor,kind]);
+
+  function handleUseEquipment(eqName:string,eqHours:number){
+    setKind('electricity');
+    setMetered(false);
+    setSourceMode('manual');
+    setRunId('');
+    setActivityName(eqName);
+    setHours(eqHours.toFixed(4));
+    setBasis(`Logged runtime (${eqHours.toFixed(2)} h) from facility machine operation log.`);
+    const el=document.getElementById('carbon-calculator-top');
+    if(el)el.scrollIntoView({behavior:'smooth'});
+    notify(`Applied ${eqName} runtime (${eqHours.toFixed(2)} h) to calculator.`);
+  }
+
+  // Active factor values
+  const effectiveFactor=factor?factor.factor:(Number(manualFactor)||0);
+  const effectiveSource=factor?`${factor.source} · ${factor.region} · ${factor.year}`:manualSource;
+  const factorUnit=kind==='traffic'?'g CO₂/vehicle-km':kind==='fuel'?'kg CO₂e/litre':'kg CO₂e/kWh';
+
+  // Live real-time math
+  const numQuantity=Number(quantity||0);
+  const numHours=Number(hours||0);
+  const numLoad=Number(loadFraction||1);
+  const numMetered=Number(meteredKwh||0);
+  const numDist=Number(distanceKm||1);
+
+  let liveKg=0;
+  let liveEquation='';
+  if(kind==='electricity'){
+    if(metered){
+      liveKg=numMetered*effectiveFactor;
+      liveEquation=`${numMetered} kWh × ${effectiveFactor} ${factorUnit}`;
+    }else{
+      liveKg=numQuantity*numHours*numLoad*effectiveFactor;
+      liveEquation=`${numQuantity} kW × ${numHours} h × ${numLoad} load × ${effectiveFactor} ${factorUnit}`;
+    }
+  }else if(kind==='fuel'){
+    liveKg=numQuantity*effectiveFactor;
+    liveEquation=`${numQuantity} L × ${effectiveFactor} ${factorUnit}`;
+  }else if(kind==='traffic'){
+    liveKg=(numQuantity*numDist*effectiveFactor)/1000;
+    liveEquation=`${numQuantity} vehicles × ${numDist} km × ${effectiveFactor} ${factorUnit} ÷ 1,000`;
+  }
+
+  function getPayload(){
     return JSON.stringify({
-      name:values.name,kind,quantity:Number(values.quantity||0),metered_kwh:useMeter?Number(values.metered_kwh):null,
-      factor:Number(values.factor),factor_id:factor?.id||null,factor_source:values.factor_source,basis:values.basis,
-      hours:kind==='electricity'?Number(values.hours||1):1,
-      load_fraction:kind==='electricity'?Number(values.load_fraction||1):1,
-      distance_km:kind==='traffic'?(selectedRun?.rule.segment_metres?selectedRun.rule.segment_metres/1000:Number(values.distance_km)):1,
-      run_id:runId||null,vehicle_class:kind==='traffic'?(values.vehicle_class||factor?.vehicle_class||null):null,
-      accept_activity_proxy:!useMeter&&proxy,
+      name:activityName.trim()||(selectedRun?selectedRun.source_name:`${kind} estimate`),
+      kind,
+      quantity:kind==='traffic'&&sourceMode==='run'&&selectedRun?(selectedRun.counts[vehicleClass]??0):numQuantity,
+      metered_kwh:kind==='electricity'&&metered?numMetered:null,
+      factor:effectiveFactor,
+      factor_id:factor&&!factor.preset?factor.id:null,
+      factor_source:effectiveSource||'Operator manual citation',
+      basis:basis.trim()||(selectedRun?`Calculated from CCTV analysis of ${selectedRun.source_name}`:'Operator documented activity'),
+      hours:kind==='electricity'&&!metered?(sourceMode==='run'&&selectedRun?(selectedRun.activity_seconds||0)/3600:numHours||1):1,
+      load_fraction:kind==='electricity'&&!metered?numLoad||1:1,
+      distance_km:kind==='traffic'?(sourceMode==='run'&&selectedRun?.rule.segment_metres?selectedRun.rule.segment_metres/1000:numDist||1):1,
+      run_id:sourceMode==='run'?runId||null:null,
+      vehicle_class:kind==='traffic'?(vehicleClass||factor?.vehicle_class||null):null,
+      accept_activity_proxy:kind==='electricity'&&!metered&&sourceMode==='run'?proxy:false,
     });
   }
-  async function submitEstimate(e:FormEvent<HTMLFormElement>){
-    e.preventDefault();
-    const submitter=(e.nativeEvent as SubmitEvent).submitter;
-    const save=submitter?.getAttribute('value')==='save';
-    const body=estimateBody(e.currentTarget);
-    const revision=previewRevision.current;
+
+  async function submitCalculation(save:boolean){
+    if(!effectiveFactor||effectiveFactor<=0){
+      setEstimateError('Please select or specify a valid positive emission factor in Step 2.');
+      return;
+    }
+    if(!activityName.trim()){
+      setEstimateError('Please provide an activity or equipment name in Step 4.');
+      return;
+    }
+    if(kind==='electricity'&&!metered&&sourceMode==='run'&&!proxy){
+      setEstimateError('Please accept the visible-motion activity proxy disclaimer before saving.');
+      return;
+    }
+
     setEstimateError('');
     if(save)setBusy(true);else setPreviewing(true);
+    const revision=++previewRevision.current;
+
     try{
+      const body=getPayload();
       const result=await json<CarbonEstimate>(save?'/carbon':'/carbon/preview',{method:'POST',body});
       if(save){
         clearPreview();
         refresh();
-        notify('Carbon estimate saved.');
+        notify('Carbon estimate saved to activity ledger.');
       }else if(revision===previewRevision.current){
         setPreview(result);
       }
@@ -500,30 +605,487 @@ function Carbon({data,connected,notify,refresh,requestedRunId}:Props & {requeste
       if(save)setBusy(false);else setPreviewing(false);
     }
   }
-  const equipment=data.carbon.filter(x=>x.kind!=='traffic').reduce((s,x)=>s+x.kg,0);const road=data.carbon.filter(x=>x.kind==='traffic').reduce((s,x)=>s+x.kg,0);
+
+  const equipment=data.carbon.filter(x=>x.kind!=='traffic').reduce((s,x)=>s+x.kg,0);
+  const road=data.carbon.filter(x=>x.kind==='traffic').reduce((s,x)=>s+x.kg,0);
   const candidates=data.runs.filter(r=>r.status==='completed'&&r.rule.capability===(kind==='traffic'?'traffic':'machine_activity'));
-  return <><Heading eyebrow="BUILT-IN CARBON ACCOUNTING" title="Carbon estimates">Calculate an estimate from traffic counts, equipment activity, electricity use, or fuel consumption.</Heading><div className="stat-grid carbon-stats"><section className="stat-card"><div className="stat-top">Equipment & fuel<Zap size={20}/></div><strong>{data.carbon.some(x=>x.kind!=='traffic')?number(equipment):'—'} <em>kg CO₂e</em></strong><small>Electricity and fuel estimates</small></section><section className="stat-card"><div className="stat-top">Road traffic<Activity size={20}/></div><strong>{data.carbon.some(x=>x.kind==='traffic')?number(road):'—'} <em>kg CO₂</em></strong><small>Vehicle-kilometre estimates</small></section><section className="stat-card"><div className="stat-top">Saved activity entries<FileText size={20}/></div><strong>{data.carbon.length}</strong><small>Not deduplicated · avoid overlapping entries</small></section></div>
-    <FactorLibrary kind={kind} connected={connected} onSelect={setFactor} notify={notify}/>
-    <div className="carbon-layout"><section className="panel carbon-form"><div className="panel-heading"><div><h2>Add an activity estimate</h2><p>Bring a factor from a credible, applicable source.</p></div><Plus size={20}/></div><div className="tab-row">{[['electricity','Electric equipment'],['fuel','Fuel consumption'],['traffic','Road traffic']].map(([id,label])=><button key={id} className={kind===id?'selected':''} onClick={()=>{setKind(id);setRunId('');setProxy(false);setMetered(false);}}>{label}</button>)}</div><form key={`${kind}:${runId}`} onSubmit={submitEstimate} onChange={clearPreview}><label>Equipment / activity name<input name="name" defaultValue={selectedRun?.source_name.slice(0,100)||''} required maxLength={100} placeholder={kind==='electricity'?'e.g. Loading-bay conveyor':kind==='fuel'?'e.g. Backup generator':'e.g. Gate 01 · cars'}/></label>{kind!=='fuel'&&<label>Activity source<select value={runId} onChange={e=>{setRunId(e.target.value);setProxy(false);}}><option value="">Operator / meter / operating log</option>{candidates.map(r=><option key={r.id} value={r.id}>{r.source_name} · {r.id.slice(0,8)}</option>)}</select></label>}{kind==='traffic'&&runId&&<label>Vehicle class<select name="vehicle_class" disabled={!!factor?.vehicle_class}>{['car','motorcycle','bus','truck'].map(c=><option key={c} value={c}>{c} ({selectedRun?.counts[c] ?? 0})</option>)}</select></label>}
-      {kind==='electricity'&&<label>Electricity input<select value={metered?'meter':'runtime'}
-        onChange={event=>{setMetered(event.target.value==='meter');setProxy(false);}}>
-        <option value="runtime">Power × runtime</option><option value="meter">Metered energy (kWh)</option>
-      </select></label>}
-      <div className="form-grid">{useMeter?<label>Metered energy (kWh)<input name="metered_kwh" type="number" min="0" max="1000000000000" step="any" required/></label>:<label>{kind==='electricity'?'Rated / measured power (kW)':kind==='fuel'?'Fuel consumed (litres)':'Vehicle count'}<input name="quantity" type="number" min="0" max="1000000000000" step="any" required={!runId||kind!=='traffic'} disabled={!!runId&&kind==='traffic'} placeholder={runId&&kind==='traffic'?'From selected run':'Enter known activity'}/></label>}{kind==='electricity'&&!useMeter&&<label>Operating time (hours)<input name="hours" type="number" min="0" max="10000000" step="any" required={!runId} disabled={!!runId} placeholder={runId?'From activity proxy':'From meter / log'}/></label>}{kind==='traffic'&&<label>Segment distance (km)<input name="distance_km" type="number" min="0.000001" max="1000000" step="any" required readOnly={!!selectedRun?.rule.segment_metres} defaultValue={selectedRun?.rule.segment_metres?selectedRun.rule.segment_metres/1000:undefined} placeholder="Configured road segment"/></label>}{kind==='electricity'&&!useMeter&&<label>Load fraction (0–1)<input name="load_fraction" type="number" min="0.000001" max="1" step="any" required placeholder="Measured or assumed; document below"/></label>}<label>{kind==='electricity'?'Factor (kg CO₂e/kWh)':kind==='fuel'?'Factor (kg CO₂e/litre)':'Factor (g CO₂/vehicle-km)'}<input name="factor" readOnly={!!factor} type="number" min="0.000000001" max="1000000000" step="any" required placeholder="No default factor assumed"/></label></div><label>Factor source & applicability<input name="factor_source" readOnly={!!factor} required minLength={3} maxLength={1000} placeholder="Source URL / document, year, region, fuel or vehicle class"/></label><label>Activity basis & assumptions<textarea name="basis" required minLength={3} maxLength={1000} placeholder="Runtime source, load assumption, operating interval, fuel type, accounting boundary and uncertainty…"/></label>{kind==='electricity'&&!useMeter&&runId&&<label className="checkbox"><input type="checkbox" required checked={proxy} onChange={e=>setProxy(e.target.checked)}/><span>I accept an unvalidated visible-motion proxy for runtime. It does not establish on/off state or power consumption.</span></label>}<div className="action-row">
-        <button className="button primary" type="submit" value="preview" disabled={!connected||busy||previewing}><Leaf size={16}/>{previewing?'Calculating…':'Preview estimate'}</button>
-        {preview&&<button className="button secondary" type="submit" value="save" disabled={!connected||busy||previewing}>{busy?'Saving…':'Save to ledger'}</button>}
+
+  return <>
+    <Heading eyebrow="BUILT-IN CARBON ACCOUNTING" title="Carbon & emissions accounting">
+      Transparent, auditable calculation pipeline for equipment power, fuel consumption, and vehicle road traffic.
+    </Heading>
+
+    <div className="stat-grid carbon-stats" id="carbon-calculator-top">
+      <section className="stat-card">
+        <div className="stat-top">Equipment & electricity<Zap size={20}/></div>
+        <strong>{data.carbon.some(x=>x.kind!=='traffic')?number(equipment):'—'} <em>kg CO₂e</em></strong>
+        <small>Electricity & stationary fuel estimates</small>
+      </section>
+      <section className="stat-card">
+        <div className="stat-top">Road traffic<Activity size={20}/></div>
+        <strong>{data.carbon.some(x=>x.kind==='traffic')?number(road):'—'} <em>kg CO₂</em></strong>
+        <small>Vehicle-kilometre travel estimates</small>
+      </section>
+      <section className="stat-card">
+        <div className="stat-top">Audited ledger entries<FileText size={20}/></div>
+        <strong>{data.carbon.length}</strong>
+        <small>Saved with source, formula & assumptions</small>
+      </section>
+    </div>
+
+    <div className="carbon-layout">
+      <section className="panel carbon-form">
+        <div className="panel-heading">
+          <div>
+            <h2>Calculate emission estimate</h2>
+            <p>Follow the 4-step guided accounting pipeline to build an auditable calculation.</p>
+          </div>
+          <Leaf size={22}/>
+        </div>
+
+        {/* Stepper Pipeline Header */}
+        <div className="carbon-stepper-header">
+          <div className="stepper-step active">
+            <span className="stepper-step-num">01</span>
+            <div className="stepper-step-info">
+              <span className="stepper-step-title">Activity & Source</span>
+              <span className="stepper-step-sub">{kind === 'electricity' ? 'Electricity' : kind === 'fuel' ? 'Fuel' : 'Traffic'}</span>
+            </div>
+          </div>
+          <div className={`stepper-step ${effectiveFactor > 0 ? 'active' : ''}`}>
+            <span className="stepper-step-num">02</span>
+            <div className="stepper-step-info">
+              <span className="stepper-step-title">Emission Factor</span>
+              <span className="stepper-step-sub">{effectiveFactor > 0 ? `${effectiveFactor} ${factorUnit}` : 'Choose factor'}</span>
+            </div>
+          </div>
+          <div className={`stepper-step ${liveKg > 0 ? 'active' : ''}`}>
+            <span className="stepper-step-num">03</span>
+            <div className="stepper-step-info">
+              <span className="stepper-step-title">Parameters & Math</span>
+              <span className="stepper-step-sub">{liveKg > 0 ? `${liveKg.toFixed(2)} kg` : 'Input parameters'}</span>
+            </div>
+          </div>
+          <div className={`stepper-step ${preview ? 'active' : ''}`}>
+            <span className="stepper-step-num">04</span>
+            <div className="stepper-step-info">
+              <span className="stepper-step-title">Audit & Commit</span>
+              <span className="stepper-step-sub">{preview ? 'Verified' : 'Verify & save'}</span>
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={e=>{e.preventDefault();}} onChange={clearPreview} className="carbon-pipeline">
+          {/* STEP 1: ACTIVITY & SOURCE */}
+          <div className="carbon-step-box">
+            <div className="carbon-step-header">
+              <span className="step-circle-badge">01</span>
+              <div>
+                <h3>Step 1: Choose Activity Category & Data Source</h3>
+                <p>Select what is generating emissions and where the activity data originates.</p>
+              </div>
+            </div>
+
+            <div className="tab-row" style={{marginBottom: 0}}>
+              {[
+                ['electricity','⚡ Electric equipment'],
+                ['fuel','⛽ Fuel consumption'],
+                ['traffic','🚗 Road traffic']
+              ].map(([id,label])=>(
+                <button
+                  key={id}
+                  type="button"
+                  className={kind===id?'selected':''}
+                  onClick={()=>{
+                    setKind(id as 'electricity'|'fuel'|'traffic');
+                    setRunId('');
+                    setSourceMode('manual');
+                    setProxy(false);
+                    setMetered(false);
+                    setFactor(null);
+                    setManualFactor('');
+                    setManualSource('');
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {kind==='electricity' && (
+              <div style={{display:'flex',gap:'12px',flexDirection:'column'}}>
+                <label>Electricity calculation method
+                  <select value={metered?'meter':'runtime'} onChange={e=>{setMetered(e.target.value==='meter');setProxy(false);}}>
+                    <option value="runtime">⚡ Power × Runtime (kW × Operating hours)</option>
+                    <option value="meter">📊 Total Metered Energy (kWh from meter or utility bill)</option>
+                  </select>
+                </label>
+              </div>
+            )}
+
+            {kind!=='fuel' && (
+              <div>
+                <label style={{marginBottom:'8px'}}>Activity data source</label>
+                <div className="carbon-source-toggle">
+                  <button
+                    type="button"
+                    className={`source-card-btn ${sourceMode==='manual'?'selected':''}`}
+                    onClick={()=>{setSourceMode('manual');setRunId('');setProxy(false);}}
+                  >
+                    <div className="source-card-top">
+                      <span>📝 Manual Log / Meter</span>
+                      {sourceMode==='manual'&&<Check size={14}/>}
+                    </div>
+                    <p>Enter known operational hours, utility meter readings, or road survey counts.</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`source-card-btn ${sourceMode==='run'?'selected':''}`}
+                    onClick={()=>{setSourceMode('run');setProxy(false);}}
+                  >
+                    <div className="source-card-top">
+                      <span>📹 CCTV Video Run</span>
+                      {sourceMode==='run'&&<Check size={14}/>}
+                    </div>
+                    <p>Auto-fill from completed computer vision analysis or optical motion proxy.</p>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {sourceMode==='run'&&kind!=='fuel'&&(
+              <label>Select analyzed video run
+                <select value={runId} onChange={e=>{setRunId(e.target.value);setProxy(false);}}>
+                  <option value="">Choose a completed run…</option>
+                  {candidates.map(r=><option key={r.id} value={r.id}>{r.source_name} · ID: {r.id.slice(0,8)} ({new Date(r.created).toLocaleDateString()})</option>)}
+                </select>
+              </label>
+            )}
+
+            {kind==='traffic'&&sourceMode==='run'&&selectedRun&&(
+              <div>
+                <label style={{marginBottom:'8px'}}>Select vehicle class (detected count)</label>
+                <div className="vehicle-class-pill-row">
+                  {(['car','motorcycle','bus','truck'] as const).map(c=>(
+                    <button
+                      key={c}
+                      type="button"
+                      className={`vehicle-class-pill ${vehicleClass===c?'selected':''}`}
+                      onClick={()=>{setVehicleClass(c);setQuantity(String(selectedRun.counts?.[c]??0));}}
+                    >
+                      <span style={{textTransform:'capitalize'}}>{c}</span>
+                      <span className="count-badge">{selectedRun.counts?.[c] ?? 0}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* STEP 2: EMISSION FACTOR */}
+          <div className="carbon-step-box">
+            <div className="carbon-step-header">
+              <span className="step-circle-badge">02</span>
+              <div>
+                <h3>Step 2: Sourced Emission Factor</h3>
+                <p>Pick a published national/regional reference preset, choose a saved factor, or enter a custom value.</p>
+              </div>
+            </div>
+
+            <FactorLibrary kind={kind} connected={connected} onSelect={setFactor} notify={notify} embedded={true}/>
+
+            {!factor && (
+              <div className="form-grid" style={{marginTop:'10px'}}>
+                <label>Manual emission factor ({factorUnit})
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.000000001"
+                    value={manualFactor}
+                    onChange={e=>setManualFactor(e.target.value)}
+                    placeholder={`e.g. ${kind==='traffic'?'145':kind==='fuel'?'2.68':'0.71'}`}
+                  />
+                </label>
+                <label>Factor source citation & applicability
+                  <input
+                    value={manualSource}
+                    onChange={e=>setManualSource(e.target.value)}
+                    placeholder="e.g. CEA Baseline 2023, DEFRA 2024, or EPA eGRID"
+                  />
+                </label>
+              </div>
+            )}
+
+            {effectiveFactor > 0 && (
+              <div className="factor-active-card">
+                <div className="factor-active-meta">
+                  <span className="badge success">VERIFIED FACTOR ACTIVE</span>
+                  <strong>{effectiveSource || 'Manual source documented'}</strong>
+                  <small>Applicable unit: {factorUnit}</small>
+                </div>
+                <div className="factor-active-val">{effectiveFactor} <small>{factorUnit}</small></div>
+              </div>
+            )}
+          </div>
+
+          {/* STEP 3: PARAMETERS & LIVE MATH */}
+          <div className="carbon-step-box">
+            <div className="carbon-step-header">
+              <span className="step-circle-badge">03</span>
+              <div>
+                <h3>Step 3: Activity Quantities & Parameters</h3>
+                <p>Provide the operational measurements. The transparent arithmetic updates in real-time below.</p>
+              </div>
+            </div>
+
+            <div className="form-grid">
+              {kind==='electricity' && metered ? (
+                <label>Total metered energy (kWh)
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={meteredKwh}
+                    onChange={e=>setMeteredKwh(e.target.value)}
+                    placeholder="From electric meter reading"
+                    required
+                  />
+                </label>
+              ) : (
+                <label>{kind==='electricity'?'Rated / measured power (kW)':kind==='fuel'?'Fuel consumed (Litres)':'Vehicle count'}
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={quantity}
+                    onChange={e=>setQuantity(e.target.value)}
+                    disabled={kind==='traffic'&&sourceMode==='run'}
+                    placeholder={kind==='traffic'&&sourceMode==='run'?'From selected CCTV run':'e.g. 15.5'}
+                    required
+                  />
+                </label>
+              )}
+
+              {kind==='electricity'&&!metered&&(
+                <label>Operating runtime (hours)
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={hours}
+                    onChange={e=>setHours(e.target.value)}
+                    disabled={sourceMode==='run'}
+                    placeholder={sourceMode==='run'?'From video motion proxy':'e.g. 4.5'}
+                    required
+                  />
+                </label>
+              )}
+
+              {kind==='electricity'&&!metered&&(
+                <label>Average load fraction (0.01 – 1.0)
+                  <input
+                    type="number"
+                    min="0.01"
+                    max="1"
+                    step="0.01"
+                    value={loadFraction}
+                    onChange={e=>setLoadFraction(e.target.value)}
+                    placeholder="e.g. 0.85 (for 85% load)"
+                    required
+                  />
+                </label>
+              )}
+
+              {kind==='traffic'&&(
+                <label>Road segment distance (km)
+                  <input
+                    type="number"
+                    min="0.001"
+                    step="any"
+                    value={distanceKm}
+                    onChange={e=>setDistanceKm(e.target.value)}
+                    placeholder="e.g. 1.0"
+                    required
+                  />
+                </label>
+              )}
+            </div>
+
+            {/* Live Interactive Math Preview */}
+            <div className="live-math-chip">
+              <div className="live-math-top">
+                <span>⚡ Real-time formula breakdown</span>
+                <span>{kind==='traffic'?'CO₂ (Road)':'CO₂e (GHG Scope 1 & 2)'}</span>
+              </div>
+              <div className="live-math-equation">
+                {liveEquation || 'Enter quantities and factor above to preview formula'}
+              </div>
+              <div className="live-math-result">
+                <strong>{new Intl.NumberFormat('en-IN',{maximumFractionDigits:4}).format(liveKg)}</strong>
+                <span>kg {kind==='traffic'?'CO₂':'CO₂e'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* STEP 4: AUDIT TRAIL & COMMIT */}
+          <div className="carbon-step-box">
+            <div className="carbon-step-header">
+              <span className="step-circle-badge">04</span>
+              <div>
+                <h3>Step 4: Audit Documentation & Ledger Commitment</h3>
+                <p>Record identifying details, accounting boundaries, and commit to the permanent ledger.</p>
+              </div>
+            </div>
+
+            <label>Equipment / activity name
+              <input
+                value={activityName}
+                onChange={e=>setActivityName(e.target.value)}
+                required
+                maxLength={100}
+                placeholder={kind==='electricity'?'e.g. Loading-bay conveyor #2':kind==='fuel'?'e.g. Backup diesel generator #1':'e.g. Main Gate Entry · Passenger Cars'}
+              />
+            </label>
+
+            <label>Activity basis & methodology assumptions
+              <textarea
+                value={basis}
+                onChange={e=>setBasis(e.target.value)}
+                required
+                minLength={3}
+                maxLength={1000}
+                placeholder="Explain runtime documentation, load factor rationale, meter serial number, fuel receipt date, boundary exclusions…"
+              />
+            </label>
+
+            {kind==='electricity'&&!metered&&sourceMode==='run'&&runId&&(
+              <label className="checkbox">
+                <input type="checkbox" required checked={proxy} onChange={e=>setProxy(e.target.checked)}/>
+                <span>I accept an unvalidated visible-motion proxy for runtime. It does not establish on/off state or electrical power draw.</span>
+              </label>
+            )}
+
+            <div className="action-row">
+              <button
+                type="button"
+                className="button primary"
+                disabled={!connected||busy||previewing||!effectiveFactor}
+                onClick={()=>void submitCalculation(false)}
+              >
+                <Sparkles size={16}/>{previewing?'Validating…':'Preview server breakdown'}
+              </button>
+
+              <button
+                type="button"
+                className="button secondary"
+                disabled={!connected||busy||previewing||!effectiveFactor}
+                onClick={()=>void submitCalculation(true)}
+              >
+                <Leaf size={16}/>{busy?'Saving…':'Save to activity ledger'}
+              </button>
+            </div>
+
+            {estimateError&&<p className="error-text" role="alert">{estimateError}</p>}
+
+            {preview&&(
+              <div className="info-note workspace-estimate" role="status" style={{background:'#edf5ea',border:'1px solid #c2dec0'}}>
+                <strong>Verified: {new Intl.NumberFormat('en-IN',{maximumFractionDigits:6}).format(preview.kg)} kg {preview.kind==='traffic'?'CO₂':'CO₂e'}</strong>
+                <p><code>{preview.formula}</code></p>
+                <p><strong>Source:</strong> {preview.factor_source} · <strong>Coverage:</strong> {preview.coverage}</p>
+              </div>
+            )}
+          </div>
+        </form>
+      </section>
+
+      {/* Aside Guidance & Formula Reference */}
+      <aside>
+        <section className="formula-card">
+          <span className="eyebrow">TRANSPARENT ACCOUNTING</span>
+          <h3>{kind==='electricity'?'Electric equipment':kind==='fuel'?'Fuel combustion':'Road vehicle traffic'}</h3>
+          <div className="formula">
+            {metered?<>Metered kWh × Factor</>:kind==='electricity'?<>Power (kW) × Hours<br/>× Load × Factor</>:kind==='fuel'?<>Litres consumed<br/>× Fuel factor</>:<>Vehicles × Distance (km)<br/>× Class factor ÷ 1,000</>}
+          </div>
+          <p>
+            {metered
+              ?'Use verified metered kWh for the documented billing or operating interval.'
+              :kind==='electricity'
+              ?'Power (kW) multiplied by operating hours gives kilowatt-hours. Factor converts to kg CO₂e.'
+              :kind==='fuel'
+              ?'Use litres actually combusted from tank logs or receipts. Multiply by fuel emission factor.'
+              :'Calculate separately for each class using factor in grams CO₂ per vehicle-kilometre.'}
+          </p>
+        </section>
+
+        <div className="warning-note section-gap">
+          <strong>Optical motion is not an electrical power meter.</strong>
+          <p>Visual motion can be caused by ambient lighting or personnel. A stationary machine may still draw idle power. For verified industrial accounting, pair CCTV with smart-meter readings or operator logs.</p>
+        </div>
+
+        <div className="side-note">
+          <ShieldCheck size={21}/>
+          <h3>Boundaries & Standards</h3>
+          <p>These entries are activity estimates for operational tracking. Do not mix Scope 1 direct fuel with Scope 2 indirect electricity, or combine CO₂-only with CO₂e totals without proper tagging.</p>
+        </div>
+      </aside>
+    </div>
+
+    {/* Video evidence if CCTV run is selected */}
+    {selectedRun&&(
+      <section className="panel section-gap">
+        <div className="panel-heading">
+          <div>
+            <h2>Video evidence for selected run</h2>
+            <p>{selectedRun.source_name} · Run ID: {selectedRun.id}</p>
+          </div>
+          <Film size={20}/>
+        </div>
+        <RunVideo key={selectedRun.id} run={selectedRun} events={data.events}/>
+      </section>
+    )}
+
+    {/* Connected Machine Operation Log */}
+    <EquipmentPanel connected={connected} notify={notify} onUseEquipment={handleUseEquipment}/>
+
+    {/* Activity Ledger */}
+    <section className="panel section-gap">
+      <div className="panel-heading">
+        <div>
+          <h2>Activity ledger</h2>
+          <p>Each entry maintains its audited mathematical formula, emission factor citation, and basis notes.</p>
+        </div>
+        <Badge>{data.carbon.length} entries</Badge>
       </div>
-      {estimateError&&<p className="error-text" role="alert">{estimateError}</p>}
-      {preview&&<div className="info-note workspace-estimate" role="status">
-        <strong>{new Intl.NumberFormat('en-IN',{maximumFractionDigits:8}).format(preview.kg)} kg {preview.kind==='traffic'?'CO₂':'CO₂e'}</strong>
-        <p>{preview.formula}</p><p>{preview.factor_source}</p>
-      </div>}</form></section><aside><section className="formula-card"><span className="eyebrow">THE CALCULATION, NOT A BLACK BOX</span><h3>{kind==='electricity'?'Electric equipment':kind==='fuel'?'Fuel consumption':'Road traffic'}</h3><div className="formula">{useMeter?<>Metered kWh × Factor</>:kind==='electricity'?<>Power × Runtime<br/>× Load × Factor</>:kind==='fuel'?<>Litres consumed<br/>× Fuel factor</>:<>Count × Distance<br/>× Class factor ÷ 1,000</>}</div><p>{useMeter?'Use the metered energy for the documented interval.':kind==='electricity'?'kW × hours = kWh. Multiply by a sourced electricity factor in kg CO₂e/kWh.':kind==='fuel'?'Use litres actually consumed or a documented engineering estimate. On/off time alone is not fuel volume.':'Calculate separately for each class. Use factors in grams CO₂ per vehicle-kilometre.'}</p></section><div className="warning-note section-gap"><strong>A runtime is not a measurement of emissions.</strong><p>Visual motion can be caused by people or lighting. A stationary machine may still consume power. For reliable on/off state use PLC, smart-meter or operator data.</p></div><div className="side-note"><ShieldCheck size={21}/><h3>Boundaries matter.</h3><p>These entries are activity estimates, not a complete industrial carbon inventory. Do not combine overlapping entries, CO₂-only and CO₂e totals, or incompatible factor boundaries.</p></div></aside></div>
-    {selectedRun&&<section className="panel section-gap">
-      <div className="panel-heading"><div><h2>Video evidence for this estimate</h2><p>{selectedRun.source_name}</p></div></div>
-      <RunVideo key={selectedRun.id} run={selectedRun} events={data.events}/>
-    </section>}
-    <EquipmentPanel connected={connected} notify={notify}/>
-    <section className="panel section-gap"><div className="panel-heading"><div><h2>Activity ledger</h2><p>Each number keeps its formula, source and assumptions.</p></div><Badge>{data.carbon.length} entries</Badge></div>{data.carbon.length?<div className="ledger">{data.carbon.map(entry=><details key={entry.id}><summary><span className="stat-icon green"><Leaf size={18}/></span><span><strong>{entry.name}</strong><small>{entry.kind} · {date(entry.created)}</small></span><strong>{number(entry.kg)} kg <small>{entry.kind==='traffic'?'CO₂':'CO₂e'}</small></strong></summary><div><code>{entry.formula}</code><p><strong>Factor source:</strong> {entry.factor_source}</p><p><strong>Activity basis:</strong> {entry.basis}</p><p><strong>Coverage:</strong> {entry.coverage}</p>{entry.run_id&&<a className="text-link" href={`#carbon/${encodeURIComponent(entry.run_id)}`}>Open linked video →</a>}</div></details>)}</div>:<Empty icon={Leaf} title="No factors. No invented footprint.">Add documented activity and an applicable emission factor to calculate your first estimate.</Empty>}</section>
+
+      {data.carbon.length?(
+        <div className="ledger">
+          {data.carbon.map(entry=>(
+            <details key={entry.id}>
+              <summary>
+                <span className="stat-icon green"><Leaf size={18}/></span>
+                <span>
+                  <strong>{entry.name}</strong>
+                  <small>{entry.kind} · {date(entry.created)}</small>
+                </span>
+                <strong>{number(entry.kg)} kg <small>{entry.kind==='traffic'?'CO₂':'CO₂e'}</small></strong>
+              </summary>
+              <div>
+                <code>{entry.formula}</code>
+                <p><strong>Factor citation:</strong> {entry.factor_source}</p>
+                <p><strong>Activity basis:</strong> {entry.basis}</p>
+                <p><strong>Coverage:</strong> {entry.coverage}</p>
+                {entry.run_id&&<a className="text-link" href={`#carbon/${encodeURIComponent(entry.run_id)}`}>Open linked video →</a>}
+              </div>
+            </details>
+          ))}
+        </div>
+      ):(
+        <Empty icon={Leaf} title="No factors. No invented footprint.">
+          Follow the 4-step pipeline above to calculate and commit your first verified activity estimate.
+        </Empty>
+      )}
+    </section>
   </>;
 }
 

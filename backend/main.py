@@ -19,8 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, text
 
 from .config import ALL_RECIPIENTS, DATA, MAX_DURATION, MAX_UPLOAD, STORAGE_LIMIT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, TELEGRAM_SEND_EVIDENCE, TOKEN
+from .carbon_defaults import COMMON_FACTORS
 from .db import CameraInput, Carbon, EmissionFactor, Equipment, Incident, Notification, OperatorKey, Run, RunSummary, Session, Source, VisionReview, engine, init_db, serialize
-from .schemas import Action, CameraInputRequest, CameraRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, ProposalRequest, RunRequest, VisionReviewRequest
+from .schemas import Action, CameraInputRequest, CameraRequest, CameraRuleRequest, CarbonRequest, CrossingReviewRequest, EmissionFactorRequest, EquipmentRequest, EquipmentStateRequest, OperatorKeyRequest, ProposalRequest, RunRequest, VisionReviewRequest
 from . import camera, vision, youtube, live_preview
 from .models import ACTION_UPLOAD, action_checkpoint, model_status
 from .alerts import telegram_probe, telegram_send
@@ -367,6 +368,18 @@ def start_camera_input(camera_id: str, body: CameraRequest, identity=Depends(own
         return result
 
 
+@app.post('/api/cameras/{camera_id}/rule')
+def save_camera_rule(camera_id: str, body: CameraRuleRequest, identity=Depends(owner)):
+    """Persist one camera's rule without starting capture or requiring the worker."""
+    check_model(body.rule)
+    check_recipients(body.rule)
+    with Session() as session:
+        row = owned(session, CameraInput, camera_id, identity)
+        row.payload = {**row.payload, 'last_rule': body.rule.model_dump()}
+        session.commit()
+        return camera_input_view(row)
+
+
 @app.post('/api/cameras/{camera_id}/stop')
 def stop_camera_input(camera_id: str, identity=Depends(owner)):
     with Session() as session:
@@ -540,7 +553,7 @@ def propose(body: ProposalRequest, identity=Depends(owner)):
     if not 0.2 <= dwell <= 120:
         raise HTTPException(422, 'Dwell must be between 0.2 and 120 seconds')
     return {'capability': capability, 'dwell_seconds': dwell, 'parser': 'constrained local parser',
-            'model': 'OpenCV ROI motion proxy' if machine else 'YOLOv8 Nano + ByteTrack',
+            'model': 'OpenCV ROI motion proxy' if machine else 'YOLO + ByteTrack',
             'warnings': ['No vision agent has inspected the preview. Review the suggested rule and any geometry.', 'Recipients are selected from configured contacts; language cannot authorize delivery.'] + (['Visible motion is not proof of electrical on/off state.'] if machine else [])}
 
 
@@ -810,6 +823,12 @@ def add_carbon(body: CarbonRequest, identity=Depends(owner)):
 def carbon(identity=Depends(owner)):
     with Session() as session:
         return [serialize(x) for x in session.scalars(select(Carbon).where(Carbon.owner == identity).order_by(Carbon.created.desc()).limit(1000))]
+
+
+@app.get('/api/carbon/presets')
+def carbon_presets(identity=Depends(owner)):
+    """Published reference factors. Never saved automatically; each entry keeps its source."""
+    return COMMON_FACTORS
 
 
 @app.get('/api/carbon/factors')

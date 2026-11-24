@@ -4,10 +4,11 @@ import type { DetectorOptions, Point, Rule, Status, VisionStatus } from './types
 
 export type StreamRule = Omit<Rule, 'points' | 'confirmed'> & DetectorOptions;
 
-export default function NetworkCamera({camera, rule, vision, workerOnline, actionReady, connected, notify, refresh, endpoint='/cameras/rtsp', initialPoints=[]}: {
+export default function NetworkCamera({camera, rule, vision, workerOnline, actionReady, connected, notify, refresh, endpoint='/cameras/rtsp', saveEndpoint, initialPoints=[]}: {
   camera: NonNullable<Status['camera']>; rule: StreamRule; workerOnline: boolean; actionReady: boolean; connected: boolean;
   vision?: VisionStatus;
   endpoint?: string;
+  saveEndpoint?: string;
   initialPoints?: Point[];
   notify: (message: string) => void; refresh: () => void;
 }) {
@@ -15,6 +16,7 @@ export default function NetworkCamera({camera, rule, vision, workerOnline, actio
   const [points, setPoints] = useState<Point[]>(initialPoints);
   const [approval, setApproval] = useState('');
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [review, setReview] = useState(false);
   const pending = useRef<AbortController | null>(null);
   // Uploaded-video geometry/confirmation must never authorize a network stream.
@@ -65,6 +67,19 @@ export default function NetworkCamera({camera, rule, vision, workerOnline, actio
     finally { if (!controller.signal.aborted) setBusy(false); }
   }
 
+  async function saveRule() {
+    if (!saveEndpoint) return;
+    setSaving(true);
+    try {
+      await json(saveEndpoint, {method: 'POST', body: JSON.stringify({
+        rule: {...JSON.parse(signature), points, confirmed},
+      })});
+      notify('Incident rule saved for this camera.');
+      refresh();
+    } catch (error) { notify((error as Error).message); }
+    finally { setSaving(false); }
+  }
+
   return <section className="camera-capture network-camera" aria-label="Network stream analysis">
     <h3>Network stream · {camera.protocol || 'YouTube / RTSP / HLS'}</h3>
     {!camera.configured&&<p className="info-note">No network source configured. Set <code>ZENITH_YOUTUBE_URL</code>, <code>ZENITH_CAMERA_URL</code> or <code>ZENITH_RTSP_URL</code> in the private backend environment and restart. <a className="text-link" href="#settings">Open health checks & setup →</a></p>}
@@ -72,6 +87,7 @@ export default function NetworkCamera({camera, rule, vision, workerOnline, actio
     <p role="status">Stream: {camera.state}{camera.last_clip_at ? ` · last clip ${new Date(camera.last_clip_at * 1000).toLocaleString()}` : ''}</p>
     <div className="action-row">
       <button type="button" className="button secondary" disabled={!connected || !camera.configured || busy} onClick={() => void loadPreview()}>Preview stream</button>
+      {saveEndpoint && <button type="button" className="button secondary" disabled={!connected || busy || saving || !confirmed || !enough || !rule.name.trim()} onClick={() => void saveRule()}>{saving ? 'Saving…' : 'Save rule'}</button>}
       <button type="button" className="button primary" disabled={!connected || !camera.configured || busy || !workerOnline || !preview || !confirmed || !enough || !rule.name.trim() || !restartable} onClick={() => void control('start')}>Start stream analysis</button>
       <button type="button" className="button secondary" disabled={!connected || busy || restartable || camera.state === 'in use by another operator'} onClick={() => void control('stop')}>Stop stream</button>
     </div>
@@ -97,10 +113,12 @@ export default function NetworkCamera({camera, rule, vision, workerOnline, actio
         }}/>
       </details></>}
       {action&&<p className="small-note">{actionReady?"The action model watches the full frame.":"Install the action checkpoint in Settings."}</p>}
-      {vision?.available&&<label className="checkbox"><input type="checkbox" checked={review} onChange={event=>setReview(event.target.checked)}/>
-        {vision.provider==='local'?'Review saved incident evidence with the local model.':
-          `I have permission to send incident evidence from this stream session to ${vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'}.`}
-        {' '}Up to {vision.auto_limit} incidents per clip. Advisory only; alerts do not wait for review.
+      {vision&&<label className="checkbox"><input type="checkbox" checked={review} disabled={!vision.available} onChange={event=>setReview(event.target.checked)}/>
+        {vision.available
+          ? <>{vision.provider==='local'?'Review saved incident evidence with the local model.':
+              `I have permission to send incident evidence from this stream session to ${vision.provider==='typesafe'?'TypeSafe (experimental Jev image decisions)':'NVIDIA'}.`}
+              {' '}Up to {vision.auto_limit} incidents per clip. Advisory only; alerts do not wait for review.</>
+          : `Vision review is configured but not available: ${vision.detail||'check Settings'}.`}
       </label>}
       <label className="checkbox"><input type="checkbox" checked={confirmed} disabled={!enough} onChange={event => setApproval(event.target.checked ? currentApproval : '')}/>I reviewed the stream preview, settings and notification recipients.</label>
     </>}

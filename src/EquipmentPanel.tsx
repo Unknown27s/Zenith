@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Clock3, Plus, Power, Settings2 } from 'lucide-react';
+import { Clock3, Plus, Power, Settings2, Zap } from 'lucide-react';
 import { json } from './api';
 
 interface Equipment {
@@ -11,7 +11,15 @@ interface Equipment {
   history: { from: string; to: string; at: number; note: string }[];
 }
 
-export default function EquipmentPanel({ connected, notify }: {connected: boolean; notify: (message: string) => void}) {
+export default function EquipmentPanel({
+  connected,
+  notify,
+  onUseEquipment,
+}: {
+  connected: boolean;
+  notify: (message: string) => void;
+  onUseEquipment?: (name: string, hours: number) => void;
+}) {
   const [items, setItems] = useState<Equipment[]>([]);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -59,6 +67,17 @@ export default function EquipmentPanel({ connected, notify }: {connected: boolea
       <h3>{item.name}</h3><p>Declared {new Date(item.state_since * 1000).toLocaleString()}</p>
       <div className="equipment-runtime"><Clock3 size={15}/><strong>{(item.logged_on_seconds / 3600).toFixed(4)} h</strong> logged ON time</div>
       <p>Unknown periods are excluded. Use documented logged hours in the electricity calculator; power, load and a sourced factor are still required.</p>
+      {onUseEquipment && item.logged_on_seconds > 0 && (
+        <button
+          type="button"
+          className="button secondary full equipment-use-btn"
+          style={{marginBottom: '8px', borderColor: '#b5d9b8', color: '#1f5933', fontWeight: 600}}
+          onClick={() => onUseEquipment(item.name, Number((item.logged_on_seconds / 3600).toFixed(4)))}
+          title="Send this machine runtime to the Carbon Calculator"
+        >
+          <Zap size={14}/> Use {(item.logged_on_seconds / 3600).toFixed(2)}h in Carbon Calc
+        </button>
+      )}
       <button className="button secondary full" disabled={!connected || busy} onClick={() => {setSelected(item.id); setState(item.state); setNote('');}}>Record state</button>
       {!!item.history.length && <details><summary>View transition history ({item.history.length})</summary>{[...item.history].reverse().map(h => <p key={`${h.at}-${h.to}`}><strong>{h.from} → {h.to}</strong> · {new Date(h.at * 1000).toLocaleString()}<br/>{h.note}</p>)}</details>}
     </article>)}</div> : <div className="inline-empty">No machines registered. All new assets begin with UNKNOWN state—not an assumed OFF state.</div>}

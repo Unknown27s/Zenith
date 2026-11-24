@@ -103,6 +103,10 @@ class CameraRequest(StrictModel):
     vision_consent: StrictBool = False
 
 
+class CameraRuleRequest(StrictModel):
+    rule: Rule
+
+
 class CameraInputRequest(StrictModel):
     name: str = Field(min_length=1, max_length=80, pattern=r'\S')
     url: str = Field(min_length=1, max_length=2048)
